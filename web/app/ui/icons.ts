@@ -8,6 +8,10 @@
 const S = (body: string, extra = "") => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${extra}>${body}</svg>`;
 
 export const ICONS: Record<string, string> = {
+  // script: a page with lines and a quote mark, for the story script
+  script: S(`<path d="M6 3.5 H15 L19 7.5 V20.5 H6 Z"/><path d="M15 3.5 V7.5 H19"/><path d="M8.5 11 H16.5 M8.5 14 H16.5 M8.5 17 H13"/>`),
+  // photos: two stacked picture frames, for the training set
+  photos: S(`<rect x="3" y="7" width="13" height="11" rx="1.5"/><path d="M5 16 L8.5 12 L11 14.5 L12.5 13 L15 16"/><path d="M8 4.5 H19 A1.5 1.5 0 0 1 20.5 6 V15"/><circle cx="7" cy="10" r="1.2"/>`),
   // redraw: a picture frame with a pen tracing over it
   redraw: S(`<rect x="2.5" y="3.5" width="13" height="11" rx="1.5" opacity=".55"/><path d="M5 12 L8 8.5 L10.5 11 L12 9.5 L14 12" opacity=".55"/><path d="M13 21.5 L21.5 13 L19 10.5 L10.5 19 L10 22 Z"/><path d="M17.5 12 L20 14.5"/>`),
   // round brush: handle, ferrule, tuft, and the pressure-tapered stroke it leaves

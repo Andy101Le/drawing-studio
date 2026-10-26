@@ -563,6 +563,46 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         with open(os.path.join(folder, stem + ".json"), "w", encoding="utf-8") as f: json.dump(meta, f, indent=1)
         with open(os.path.join(folder, stem + ".txt"), "w", encoding="utf-8") as f: f.write(caption)
         out = dataset_stats(); out["saved"] = os.path.join(verdict, action, stem + ".png").replace("\\", "/"); return out
+    @app.get("/dataset/list")
+    def dataset_list(limit: int = 500):
+        """The kept set for review in the app: id, folder, name, caption, character and what is weak about the caption."""
+        import os
+        from .actions import list_items
+        return {"items": list_items(os.path.join(DATA, "liked"), limit)}
+    @app.get("/dataset/thumb")
+    def dataset_thumb(id: str, size: int = 160):
+        import os
+        from fastapi.responses import Response
+        from .actions import _paths_for
+        try: path, _, _ = _paths_for(os.path.join(DATA, "liked"), id)
+        except Exception: raise HTTPException(404, "no such image")
+        im = Image.open(path).convert("RGB"); im.thumbnail((size, size)); buf = io.BytesIO(); im.save(buf, format="JPEG", quality=82)
+        return Response(buf.getvalue(), media_type="image/jpeg", headers={"cache-control": "no-store"})
+    @app.post("/dataset/update")
+    def dataset_update(body: dict):
+        """Edit a kept image's caption, folder, name or character tag."""
+        import os
+        from .actions import update_item
+        try: return update_item(os.path.join(DATA, "liked"), body.get("id", ""), body.get("caption"), body.get("action"), body.get("name"), body.get("character"))
+        except FileNotFoundError: raise HTTPException(404, "no such image")
+        except ValueError as e: raise HTTPException(400, str(e))
+    @app.post("/dataset/remove")
+    def dataset_remove(body: dict):
+        """Take an image out of the training set (moved to dataset/removed, not deleted)."""
+        import os
+        from .actions import remove_item
+        try: return {"movedTo": remove_item(os.path.join(DATA, "liked"), body.get("id", ""))}
+        except FileNotFoundError: raise HTTPException(404, "no such image")
+    @app.post("/dataset/suggest")
+    def dataset_suggest(body: dict):
+        """Tags the WD14 tagger sees in a kept image, to fill in a weak caption."""
+        import os
+        eng = state["engine"]
+        if eng is None: raise HTTPException(503, "model loading")
+        from .actions import _paths_for
+        try: path, _, _ = _paths_for(os.path.join(DATA, "liked"), body.get("id", ""))
+        except Exception: raise HTTPException(404, "no such image")
+        return {"tags": eng.tag(Image.open(path), float(body.get("threshold", 0.35)))}
     @app.get("/dataset/actions")
     def dataset_actions():
         """The action folders the app can offer in the Keep dialog, with the detector for a caption."""

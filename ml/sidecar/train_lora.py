@@ -28,6 +28,7 @@ p.add_argument("--resolution", type=int, default=512)
 p.add_argument("--batch", type=int, default=1)
 p.add_argument("--accum", type=int, default=4, help="gradient accumulation: effective batch = batch * accum")
 p.add_argument("--trigger", default="ohwx-style", help="word prepended to every caption; the app adds it to prompts automatically when the LoRA is on (empty to disable)")
+p.add_argument("--only", default="", help="train on images whose character tag or caption contains this word (a character LoRA: --only kai --trigger kai)")
 p.add_argument("--balance", type=int, default=1, help="1: sample every action folder equally (default); 0: natural frequencies")
 p.add_argument("--snr-gamma", type=float, default=5.0, help="min-SNR loss weighting (5 is the paper's value; 0 = off): steadier training, cleaner detail")
 p.add_argument("--save-every", type=int, default=250, help="also write loras/<name>-s<step>.safetensors at these steps, so you can compare an earlier, lighter version against the final one")
@@ -99,9 +100,17 @@ class Pairs(Dataset):
         sys.path.insert(0, ".")
         from sidecar.actions import walk_images, caption_of, action_for
         self.actions = []
+        only = (a.only or "").strip().lower()
         for path, action in walk_images(folder):
             f = os.path.relpath(path, folder); stem = os.path.splitext(os.path.basename(path))[0]
             cap = caption_of(path)
+            if only:
+                # a character LoRA: keep the images tagged with that character in the app, or whose caption names it
+                meta_char = ""
+                try:
+                    with open(os.path.splitext(path)[0] + ".json", encoding="utf-8") as fh: meta_char = (json.load(fh).get("character") or "").lower()
+                except Exception: pass
+                if only != meta_char and only not in cap.lower(): continue
             if not cap: cap = name_caption(stem)
             if not cap: uncaptioned.append(f)
             try:
@@ -114,7 +123,7 @@ class Pairs(Dataset):
             print(f"{len(uncaptioned)} images have no caption (.json from Keep or a .txt next to them); they train on the trigger word only:")
             for f in uncaptioned: print("   ", f)
         self.res = res
-        if not self.items: raise SystemExit(f"no images in {folder}: keep some results in the Generate tab first")
+        if not self.items: raise SystemExit(f"no images in {folder}" + (f" tagged '{a.only}'" if a.only else "") + ": keep some results in the Generate tab first (and tag them with the character in the Dataset tab)")
         per = {}
         for a in self.actions: per[a] = per.get(a, 0) + 1
         print(f"{len(self.items)} images: " + ", ".join(f"{k} {v}" for k, v in sorted(per.items(), key=lambda kv: -kv[1])))

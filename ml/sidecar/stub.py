@@ -29,6 +29,11 @@ class H(BaseHTTPRequestHandler):
             out = ["data:image/png;base64," + __import__("base64").b64encode(png(64, 64, k)).decode() for k in (3, 4)]
             return self._send(200, {"images": out, "pool": LIKED[0]})
         if self.path == "/dataset/stats": return self._send(200, stats())
+        if self.path.startswith("/dataset/list"):
+            items = [{"id": f"running/trooper-run-{i}.png", "action": "running", "name": f"trooper-run-{i}", "caption": "ohwx-style, 1boy, running, rain" if i % 2 else "masterpiece, best quality, absurdres", "character": "kai" if i == 1 else "", "issues": [] if i % 2 else ["fewer than 3 content tags", "no subject (1boy, 1girl, solo...)", "no action tag"], "mtime": 1000 - i} for i in range(4)]
+            return self._send(200, {"items": items})
+        if self.path.startswith("/dataset/thumb"):
+            data = png(64, 64, 7); self.send_response(200); self.send_header("content-type", "image/png"); self.send_header("access-control-allow-origin", "*"); self.end_headers(); self.wfile.write(data); return
         if self.path == "/dataset/actions": return self._send(200, {"actions": ["running", "walking", "jumping", "fighting", "sword", "shooting", "sneaking", "talking", "death", "disarming", "sitting", "standing", "misc"]})
         if self.path.startswith("/jobs/"):
             j = jobs.get(self.path.split("/")[2])
@@ -47,6 +52,9 @@ class H(BaseHTTPRequestHandler):
             if body.get("verdict") == "liked": LIKED[0] += 1
             else: LIKED[1] += 1
             out = stats(); out["saved"] = f"{body.get('verdict')}/{body.get('action') or 'standing'}/{body.get('name') or '1792'}-123456.png"; return self._send(200, out)
+        if self.path == "/dataset/update": return self._send(200, {"id": body.get("id"), "caption": body.get("caption", ""), "issues": []})
+        if self.path == "/dataset/remove": return self._send(200, {"movedTo": "C:\\omni-cell\\ml\\sidecar\\dataset\\removed"})
+        if self.path == "/dataset/suggest": return self._send(200, {"tags": [{"tag": "1boy", "p": 0.95}, {"tag": "armor", "p": 0.9}, {"tag": "helmet", "p": 0.8}, {"tag": "rain", "p": 0.6}, {"tag": "holding gun", "p": 0.55}]})
         if self.path == "/dataset/guess":
             cap = (body.get("caption") or "").lower(); return self._send(200, {"action": "running" if "running" in cap else "sword" if "sword" in cap or "katana" in cap else "misc"})
         if self.path == "/dataset/organize": return self._send(200, stats())
