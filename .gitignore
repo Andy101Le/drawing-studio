@@ -4,3 +4,5 @@ build*/
 dist/
 desktop/src-tauri/target/
 server/data/
+ml/sidecar/embeddings/*
+!ml/sidecar/embeddings/README.md
