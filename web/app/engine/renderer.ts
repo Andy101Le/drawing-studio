@@ -12,6 +12,7 @@
  */
 
 import { drawBalloon } from "./manga.js";
+import { drawFx } from "./manga-fx.js";
 import { effectiveLayer, clipBase } from "./document.js";
 import { layerAt, keyMatrix, cameraAt, cameraRect } from "./tween.js";
 import { BLEND_TO_CANVAS, TILE, type Doc, type Frame, type Layer, type Panel, type Tile } from "./document.js";
@@ -36,7 +37,7 @@ export interface ActiveStroke {
   blend: "normal" | "multiply";
 }
 
-const PROJ_OPTS = { activeStroke: null, extraStrokes: [], proofCmyk: false, showPanels: false, showGrid: false, selectedBalloon: null, guides: null, nprCanvases: new Map(), toneInk: "#141414" } as unknown as RenderOptions;
+const PROJ_OPTS = { activeStroke: null, extraStrokes: [], proofCmyk: false, showPanels: false, showGrid: false, selectedBalloon: null, selectedFx: null, guides: null, nprCanvases: new Map(), toneInk: "#141414" } as unknown as RenderOptions;
 
 export interface RenderOptions {
   activeStroke: ActiveStroke | null;
@@ -44,6 +45,7 @@ export interface RenderOptions {
   showPanels: boolean;
   extraStrokes?: ActiveStroke[];
   selectedBalloon?: number | null;
+  selectedFx?: number | null;
   guides?: { bleed: number; safe: number } | null;
   showGrid: boolean;
   nprCanvases: Map<number, CanvasImageSource>; // layerId → rendered NPR canvas
@@ -236,6 +238,7 @@ export class Renderer {
         const u = this.uiCanvas.getContext("2d")!;
         u.setTransform(1, 0, 0, 1, 0, 0); u.clearRect(0, 0, W, H); u.setTransform(this.matrix());
         if (doc.surface.shadow) this.drawPageShadow(u, doc);
+        for (const f of doc.fx) drawFx(u, f, doc.panels, doc.dpi, f.id === opts.selectedFx, this.view.zoom * this.dpr);
         for (const b of doc.balloons) drawBalloon(u, b, b.id === opts.selectedBalloon);
         if (opts.showPanels) this.drawPanels(u, doc.panels);
         if (opts.showGrid) this.drawGrid(u, doc);
@@ -290,6 +293,7 @@ export class Renderer {
       }
     }
     ctx.setTransform(m);
+    for (const f of doc.fx) drawFx(ctx, f, doc.panels, doc.dpi, f.id === opts.selectedFx, this.view.zoom * this.dpr);
     for (const b of doc.balloons) drawBalloon(ctx, b, b.id === opts.selectedBalloon);
     // panels
     if (opts.showPanels) this.drawPanels(ctx, doc.panels);
@@ -856,7 +860,7 @@ export class Renderer {
       } else drawInto(ctx, layer);
       ctx.restore();
     }
-    if (!layerIds) for (const b of doc.balloons) drawBalloon(ctx, b);
+    if (!layerIds) { for (const f of doc.fx) drawFx(ctx, f, doc.panels, doc.dpi, false, scale); for (const b of doc.balloons) drawBalloon(ctx, b); }
     ctx.setTransform(1, 0, 0, 1, 0, 0); // callers draw on this context in pixel space
     return c;
   }

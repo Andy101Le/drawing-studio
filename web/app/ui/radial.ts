@@ -74,4 +74,4 @@ export function bindRadialTriggers(canvas: HTMLCanvasElement, menu: ReturnType<t
   canvas.addEventListener("pointerup", () => { if (timer) clearTimeout(timer); timer = null; }, { capture: true });
 }
 
-export const TOOL_LABELS: Record<Tool, string> = { brush: "Brush (B)", eraser: "Eraser (E)", vector: "Vector pen (V)", node: "Node edit (A)", fill: "Fill (G)", select: "Select (M)", wand: "Magic wand (W)", move: "Move / transform (T)", text: "Text & balloons (X)", ruler: "Ruler / perspective (U)", gradient: "Gradient (D)", pan: "Pan (H)", zoom: "Zoom", rotate: "Rotate (R)", "panel-cut": "Panel cut (K)", eyedrop: "Eyedropper (I)" };
+export const TOOL_LABELS: Record<Tool, string> = { brush: "Brush (B)", eraser: "Eraser (E)", vector: "Vector pen (V)", node: "Node edit (A)", fill: "Fill (G)", select: "Select (M)", wand: "Magic wand (W)", move: "Move / transform (T)", text: "Text & balloons (X)", fx: "Manga effects (F)", ruler: "Ruler / perspective (U)", gradient: "Gradient (D)", pan: "Pan (H)", zoom: "Zoom", rotate: "Rotate (R)", "panel-cut": "Panel cut (K)", eyedrop: "Eyedropper (I)" };

@@ -91,6 +91,7 @@ export function installCursor(app: App, viewport: HTMLElement, canvas: HTMLCanva
     if (tool === "zoom" || tool === "rotate" || tool === "eyedrop" || tool === "node" || tool === "panel-cut") { hideRing(); setCursor(svgCursor(tool)); return; }
     if (tool === "fill") { hideRing(); setCursor(svgCursor(dragging && app.fillLasso ? "lasso" : "fill")); return; }
     if (tool === "text") { hideRing(); setCursor("text"); return; }
+    if (tool === "fx") { hideRing(); setCursor("crosshair"); return; }
     if (tool === "ruler" || tool === "gradient") { hideRing(); setCursor(svgCursor("crosshair")); return; }
     if (tool === "select") { hideRing(); setCursor(svgCursor(app.selShape === "lasso" || app.selShape === "magnetic" ? "lasso" : "marquee")); return; }
     if (tool === "wand") { hideRing(); setCursor(svgCursor("wand")); return; }

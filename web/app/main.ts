@@ -49,10 +49,10 @@ const root = document.getElementById("app") as HTMLElement;
 let menubar: HTMLElement;
 // ---- tool column ----
 const tools = h("div", { id: "tools" });
-const TOOL_ICONS: Record<Tool, string> = { brush: "✎", eraser: "◌", vector: "⌇", node: "⊹", fill: "▣", select: "⬚", wand: "⚲", move: "⤧", text: "T", ruler: "R", gradient: "◐", pan: "✥", zoom: "⌕", rotate: "↻", "panel-cut": "⟋", eyedrop: "✦" };
+const TOOL_ICONS: Record<Tool, string> = { brush: "✎", eraser: "◌", vector: "⌇", node: "⊹", fill: "▣", select: "⬚", wand: "⚲", move: "⤧", text: "T", fx: "⟫", ruler: "R", gradient: "◐", pan: "✥", zoom: "⌕", rotate: "↻", "panel-cut": "⟋", eyedrop: "✦" };
 const toolButtons = new Map<Tool, HTMLButtonElement>();
 // grouped by purpose: draw, select, vector, guides, view
-const TOOL_GROUPS: Tool[][] = [["brush", "eraser", "fill", "gradient", "text"], ["select", "wand", "move"], ["vector", "node"], ["ruler", "panel-cut"], ["eyedrop", "pan", "zoom", "rotate"]];
+const TOOL_GROUPS: Tool[][] = [["brush", "eraser", "fill", "gradient", "text", "fx"], ["select", "wand", "move"], ["vector", "node"], ["ruler", "panel-cut"], ["eyedrop", "pan", "zoom", "rotate"]];
 TOOL_GROUPS.forEach((group, gi) => {
   if (gi) tools.append(h("div", { class: "group-sep" }));
   for (const t of group) {
@@ -119,7 +119,7 @@ menubar = buildRibbon(app, {
     // wet/acrylic simulation state, the story strip, balloons and selection overlays
     app.emit("doc-reset");
     const old = app.doc; for (const l of old.drawing.layers) resetMedia(l);
-    app.history.clear(); app.story = null; app.selectedBalloon = null; app.selectedNode = null;
+    app.history.clear(); app.story = null; app.selectedBalloon = null; app.selectedFx = null; app.selectedNode = null;
     const w = old.width, hgt = old.height, dpi = old.dpi; // keep the page size and mode the artist was using
     app.doc = new Doc(); app.doc.width = w; app.doc.height = hgt; app.doc.dpi = dpi; app.doc.mode = old.mode; app.doc.surface = { ...old.surface };
     app.doc.panels = [pageToPanel(app.doc.width, app.doc.height, Math.round(dpi * 0.5), Math.round(dpi * 0.12))];
@@ -278,7 +278,7 @@ let frames = 0, fpsT = performance.now(), fps = 0;
 let lastInput = 0;
 addEventListener("pointermove", () => { lastInput = performance.now(); }, { passive: true, capture: true });
 function renderOpts(): RenderOptions {
-  return { activeStroke: app.activeStroke ? { layerId: app.activeStroke.layer.id, buffer: app.activeStroke.buffer!, opacity: app.activeStroke.preset.opacity, kind: app.activeStroke.preset.kind, blend: app.activeStroke.preset.blend } : null, extraStrokes: app.extraStrokes.map((x) => ({ layerId: x.layer.id, buffer: x.buffer!, opacity: x.preset.opacity, kind: x.preset.kind, blend: x.preset.blend })), proofCmyk: app.proofCmyk, showPanels: app.showPanels, showGrid: app.showGrid, selectedBalloon: app.selectedBalloon, guides: app.showGuides ? app.pageGuides : null, nprCanvases, toneInk: "#141414" };
+  return { activeStroke: app.activeStroke ? { layerId: app.activeStroke.layer.id, buffer: app.activeStroke.buffer!, opacity: app.activeStroke.preset.opacity, kind: app.activeStroke.preset.kind, blend: app.activeStroke.preset.blend } : null, extraStrokes: app.extraStrokes.map((x) => ({ layerId: x.layer.id, buffer: x.buffer!, opacity: x.preset.opacity, kind: x.preset.kind, blend: x.preset.blend })), proofCmyk: app.proofCmyk, showPanels: app.showPanels, showGrid: app.showGrid, selectedBalloon: app.selectedBalloon, selectedFx: app.selectedFx, guides: app.showGuides ? app.pageGuides : null, nprCanvases, toneInk: "#141414" };
 }
 function loop(): void {
   if (nprDirty) { nprDirty = false; renderNpr(); }

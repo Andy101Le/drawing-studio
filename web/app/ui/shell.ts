@@ -33,6 +33,7 @@ export function buildRibbon(app: AppState, a: RibbonActions): HTMLElement {
       h("div", { class: "ribbon-group" }, ...(manga ? [
         h("button", { title: "Page presets and panel templates", onClick: () => a.openPanel("Manga") }, "Templates"),
         h("button", { title: "Text & balloons", "data-action": "tool.text", class: app.tool === "text" ? "active" : "", onClick: () => app.setTool("text") }, "Balloons"),
+        h("button", { title: "Manga effects", "data-action": "tool.fx", class: app.tool === "fx" ? "active" : "", onClick: () => app.setTool("fx") }, "FX"),
         h("button", { title: "Screentones", onClick: () => a.openPanel("Tone") }, "Tones"),
         h("button", { title: "Export PSD / PDF / PNG", onClick: () => a.openPanel("Page") }, "Export"),
       ] : [

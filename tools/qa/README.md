@@ -11,5 +11,5 @@ Before running, from the repo root:
 
 Then `python tools/qa/<script>.py`. `sweep.py` and `sweep2.py` press every panel, tool and
 top-bar button and report page errors; the others exercise one feature each (Generate panel,
-character design, magnetic lasso, Tighten, group move, delete, redraw). `gen.py` reads
+character design, magnetic lasso, Tighten, group move, delete, redraw, manga effects: `fx.py`, `fx-save.py`). `gen.py` reads
 `media.py` from the same folder; copy it along if you move things.
