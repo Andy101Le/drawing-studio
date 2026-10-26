@@ -48,12 +48,20 @@ export class VaultController {
   }
   lock(): void { this.account.lock(); this.set("locked"); }
   async save(): Promise<void> {
+    // Ctrl+S with the vault locked used to throw "keyring is locked" to the console and nothing
+    // else happened. Now it says so in the vault panel and opens it, and the autosave still runs.
+    if (!this.account.session.isUnlocked) {
+      this.set("locked: unlock the vault (or enrol) to save encrypted. Autosave keeps a plain recovery copy meanwhile.");
+      this.app.emit("open-panel", "Vault"); return;
+    }
     const t0 = performance.now();
-    const bytes = await packStory(this.app);
-    await this.account.putAsset(bytes, PROJECT_ID);
-    const meta = await Account.syncMetadata(PROJECT_ID, bytes.byteLength + 40 + 16 * Math.ceil(bytes.byteLength / 1048576), BigInt(Date.now()));
-    this.onSaved?.();
-    this.set(`saved ${(bytes.byteLength / 1024).toFixed(0)} KB encrypted in ${((performance.now() - t0) / 1000).toFixed(2)} s · server sees {hash ${meta.objectIdHash.slice(0, 10)}…, lamport, ${meta.ciphertextLength} B}`);
+    try {
+      const bytes = await packStory(this.app);
+      await this.account.putAsset(bytes, PROJECT_ID);
+      const meta = await Account.syncMetadata(PROJECT_ID, bytes.byteLength + 40 + 16 * Math.ceil(bytes.byteLength / 1048576), BigInt(Date.now()));
+      this.onSaved?.();
+      this.set(`saved ${(bytes.byteLength / 1024).toFixed(0)} KB encrypted in ${((performance.now() - t0) / 1000).toFixed(2)} s · server sees {hash ${meta.objectIdHash.slice(0, 10)}…, lamport, ${meta.ciphertextLength} B}`);
+    } catch (e) { this.set(`save failed: ${e instanceof Error ? e.message : String(e)}`); }
   }
   async load(): Promise<void> {
     try {
