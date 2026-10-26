@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OMNI-CELL WebHID Enumeration Test (Section 8)</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; background: #0f0f0f; color: #e6e6e6; margin: 0; padding: 16px; }
+  button { background: #161616; color: #e6e6e6; border: 1px solid #8c8c8c; padding: 10px 16px; margin: 4px 8px 4px 0; cursor: pointer; }
+  button:disabled { opacity: .4; }
+  pre { background: #161616; border: 1px solid #8c8c8c; padding: 12px; white-space: pre-wrap; max-height: 40vh; overflow: auto; }
+  #pad { height: 220px; border: 1px solid #8c8c8c; touch-action: none; margin-top: 8px; }
+  .ok { color: #9fe29f; } .bad { color: #ff8a8a; } .warn { color: #ffd37a; }
+  table { border-collapse: collapse; } td, th { border: 1px solid #8c8c8c; padding: 4px 10px; text-align: left; }
+</style>
+</head>
+<body>
+<h2>WebHID enumeration + rate test</h2>
+<p>Plug the tablet in, then: <b>1</b> request device → <b>2</b> draw on the tablet for 10 s → read the verdict. Pointer fallback test is independent and also works on iPad Safari.</p>
+<button id="req">1. Request HID device</button>
+<button id="granted">Reopen already-granted</button>
+<button id="ptr">Pointer fallback test (draw on the box)</button>
+<button id="copy">Copy report</button>
+<table id="verdict"><tr><th>Check</th><th>Result</th></tr></table>
+<div id="pad"></div>
+<pre id="log"></pre>
+<script>
+const log = (s, cls) => { const el = document.getElementById('log'); el.insertAdjacentHTML('beforeend', `<span class="${cls||''}">${s}</span>\n`); el.scrollTop = el.scrollHeight; };
+const verdict = (k, v, cls) => { const t = document.getElementById('verdict'); const r = t.insertRow(); r.insertCell().textContent = k; const c = r.insertCell(); c.textContent = v; c.className = cls || ''; };
+const hex = n => '0x' + n.toString(16).padStart(4, '0');
+
+verdict('WebHID API present', 'hid' in navigator ? 'yes' : 'no (use Chrome/Edge on Windows, macOS, Linux, ChromeOS)', 'hid' in navigator ? 'ok' : 'bad');
+verdict('Secure context', isSecureContext ? 'yes' : 'no (serve over https or localhost)', isSecureContext ? 'ok' : 'bad');
+verdict('SharedArrayBuffer (COOP/COEP)', typeof SharedArrayBuffer !== 'undefined' ? 'yes' : 'no: add COOP/COEP headers for threaded Wasm', typeof SharedArrayBuffer !== 'undefined' ? 'ok' : 'warn');
+
+function dumpCollections(dev) {
+  const walk = (c, depth) => {
+    const pad = '  '.repeat(depth);
+    log(`${pad}collection usagePage=${hex(c.usagePage)} usage=${hex(c.usage)} type=${c.type}`);
+    for (const r of c.inputReports) {
+      log(`${pad}  INPUT reportId=${r.reportId}`);
+      let bit = 0;
+      for (const it of r.items) {
+        const usages = (it.usages || []).map(u => hex(u >>> 16) + ':' + hex(u & 0xffff)).join(',');
+        log(`${pad}    bit ${String(bit).padStart(4)} size=${it.reportSize} count=${it.reportCount} logMax=${it.logicalMaximum} usages=[${usages}]`);
+        bit += it.reportSize * it.reportCount;
+      }
+      log(`${pad}  total ${bit} bits = ${Math.ceil(bit / 8)} bytes (+1 report ID)`);
+    }
+    for (const ch of c.children) walk(ch, depth + 1);
+  };
+  dev.collections.forEach(c => walk(c, 0));
+}
+
+let count = 0, first = 0, last = 0, bytesSeen = new Set(), sampleShown = 0;
+function attach(dev) {
+  log(`device: ${dev.productName} vendor=${hex(dev.vendorId)} product=${hex(dev.productId)} opened=${dev.opened}`, 'ok');
+  dumpCollections(dev);
+  count = 0; first = 0; sampleShown = 0;
+  dev.addEventListener('inputreport', e => {
+    const now = performance.now();
+    if (!first) first = now;
+    last = now; count++;
+    bytesSeen.add(e.data.byteLength);
+    if (sampleShown < 5) {
+      sampleShown++;
+      const b = new Uint8Array(e.data.buffer, e.data.byteOffset, e.data.byteLength);
+      log(`report id=${e.reportId} len=${b.length} bytes=${[...b].map(x => x.toString(16).padStart(2,'0')).join(' ')}`);
+    }
+  });
+  setTimeout(() => {
+    const secs = (last - first) / 1000;
+    const hz = secs > 0 ? count / secs : 0;
+    log(`\n=== 10 s window: ${count} reports, ${hz.toFixed(1)} Hz, payload lengths ${[...bytesSeen].join('/')} ===`, hz >= 200 ? 'ok' : 'warn');
+    verdict('Input reports received', count > 0 ? `${count}` : '0: OS driver likely owns the device (expected on Windows with vendor driver installed)', count > 0 ? 'ok' : 'bad');
+    verdict('Report rate', `${hz.toFixed(1)} Hz (target ≥ 200)`, hz >= 200 ? 'ok' : (hz > 0 ? 'warn' : 'bad'));
+    verdict('Primary input path', count > 0 ? 'WebHID parser (hid-parser.ts)' : 'Pointer Events fallback (PointerEventSource)', count > 0 ? 'ok' : 'warn');
+  }, 10_000);
+  log('draw on the tablet for 10 seconds...', 'warn');
+}
+
+document.getElementById('req').onclick = async () => {
+  try {
+    const devs = await navigator.hid.requestDevice({ filters: [] }); // no filter: show everything, so hidden digitizers are visible
+    if (!devs.length) return log('no device selected', 'bad');
+    const dev = devs[0];
+    if (!dev.opened) await dev.open();
+    attach(dev);
+  } catch (e) { log('error: ' + e.message, 'bad'); }
+};
+document.getElementById('granted').onclick = async () => {
+  const devs = await navigator.hid.getDevices();
+  log(`granted devices: ${devs.length}`);
+  for (const d of devs) { try { if (!d.opened) await d.open(); attach(d); } catch (e) { log(`${d.productName}: ${e.message}`, 'bad'); } }
+};
+
+// Pointer Events fallback: rate, coalesced samples, pressure/tilt presence.
+document.getElementById('ptr').onclick = () => {
+  const pad = document.getElementById('pad');
+  let n = 0, coalesced = 0, t0 = 0, t1 = 0, maxP = 0, tiltSeen = false, type = '';
+  const h = e => {
+    if (e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;
+    type = e.pointerType;
+    if (!t0) t0 = performance.now(); t1 = performance.now();
+    n++; coalesced += (e.getCoalescedEvents ? e.getCoalescedEvents().length : 1);
+    maxP = Math.max(maxP, e.pressure); if (e.tiltX || e.tiltY) tiltSeen = true;
+  };
+  pad.addEventListener('pointermove', h);
+  log('draw inside the box for 10 seconds...', 'warn');
+  setTimeout(() => {
+    pad.removeEventListener('pointermove', h);
+    const s = (t1 - t0) / 1000;
+    log(`\n=== pointer: type=${type} events ${(n/s).toFixed(1)} Hz, coalesced samples ${(coalesced/s).toFixed(1)} Hz, max pressure ${maxP.toFixed(3)}, tilt ${tiltSeen ? 'yes' : 'no'} ===`, 'ok');
+    verdict('Pointer fallback sample rate', `${(coalesced/s).toFixed(1)} Hz (target ≥ 120)`, coalesced/s >= 120 ? 'ok' : 'warn');
+    const penLike = type === 'pen' && maxP > 0 && Math.abs(maxP - 0.5) > 0.02;
+    verdict('Pointer pressure', penLike ? `variable, max ${maxP.toFixed(3)} (pen)` : `max ${maxP.toFixed(3)} on ${type} (mouse reports a constant 0.5; use a stylus)`, penLike ? 'ok' : 'warn');
+    verdict('Pointer tilt', tiltSeen ? 'yes' : 'none reported', tiltSeen ? 'ok' : 'warn');
+  }, 10_000);
+};
+document.getElementById('copy').onclick = () => navigator.clipboard.writeText(document.getElementById('verdict').innerText + '\n\n' + document.getElementById('log').innerText);
+</script>
+</body>
+</html>
