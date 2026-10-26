@@ -669,6 +669,27 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0); this.blitScratch(ctx, this.scratch); ctx.setTransform(saved);
   }
 
+  /**
+   * A tone layer as pixels at `scale` output pixels per page pixel: the painted mask filled with
+   * the dot screen (or noise/sand/gradient field). flatten() used to draw the mask itself, so every
+   * export showed tones as solid black; this is what export, PSD and a single-layer redraw use.
+   */
+  bakeTone(g: CanvasRenderingContext2D, doc: Doc, layer: Layer, scale: number, outW: number, outH: number, ink = "#141414"): void {
+    const t = layer.tone; const field = t.shape === "noise" || t.shape === "sand" || t.gradient;
+    const tmp = document.createElement("canvas"); tmp.width = outW; tmp.height = outH; const m = tmp.getContext("2d")!;
+    m.scale(scale, scale); const tr = layer.transform; m.transform(tr[0], tr[1], tr[2], tr[3], tr[4], tr[5]);
+    for (const tile of layer.tiles.values()) if (tile.canvas) m.drawImage(tile.canvas as CanvasImageSource, tile.x * TILE, tile.y * TILE);
+    m.setTransform(1, 0, 0, 1, 0, 0); m.globalCompositeOperation = "source-in";
+    if (field) {
+      const fieldCanvas = toneField(t, doc.dpi, scale, outW, outH, (sx, sy) => ({ x: sx / scale, y: sy / scale }), hexToRgb(ink));
+      m.drawImage(fieldCanvas as CanvasImageSource, 0, 0);
+    } else {
+      const pat = tonePattern(t, doc.dpi, scale, hexToRgb(ink)); const p = m.createPattern(pat.canvas as CanvasImageSource, "repeat");
+      if (p) { m.fillStyle = p; m.fillRect(0, 0, outW, outH); }
+    }
+    const saved = g.getTransform(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(tmp, 0, 0); g.setTransform(saved);
+  }
+
   /** Tone layer: painted alpha becomes the mask; pattern is rendered in screen space. */
   private toneFieldCache: { key: string; canvas: HTMLCanvasElement | OffscreenCanvas } | null = null;
   private drawTone(ctx: CanvasRenderingContext2D, doc: Doc, layer: Layer, vx0: number, vy0: number, vx1: number, vy1: number, ink: string): void {
@@ -824,7 +845,7 @@ export class Renderer {
       const eff = effectiveLayer(doc.drawing.layers, layer); if (!eff.visible) continue;
       const base = layerIds ? null : clipBase(doc.drawing.layers, layer);
       const kf = layer.keys.length ? layerAt(layer.keys, doc.currentFrame) : null;
-      const drawInto = (g: CanvasRenderingContext2D, l: Layer) => { g.save(); const lk = l.keys.length ? layerAt(l.keys, doc.currentFrame) : null; const t = lk ? keyMatrix(lk) : l.transform; g.transform(t[0], t[1], t[2], t[3], t[4], t[5]); for (const tile of l.tiles.values()) if (tile.canvas) g.drawImage(tile.canvas as CanvasImageSource, tile.x * TILE, tile.y * TILE); if (l.kind === "vector") this.drawPaths(g, l); g.restore(); };
+      const drawInto = (g: CanvasRenderingContext2D, l: Layer) => { if (l.kind === "tone") { this.bakeTone(g, doc, l, scale, c.width, c.height); return; } g.save(); const lk = l.keys.length ? layerAt(l.keys, doc.currentFrame) : null; const t = lk ? keyMatrix(lk) : l.transform; g.transform(t[0], t[1], t[2], t[3], t[4], t[5]); for (const tile of l.tiles.values()) if (tile.canvas) g.drawImage(tile.canvas as CanvasImageSource, tile.x * TILE, tile.y * TILE); if (l.kind === "vector") this.drawPaths(g, l); g.restore(); };
       ctx.save(); ctx.globalAlpha = eff.opacity * (kf ? kf.opacity : 1); ctx.globalCompositeOperation = BLEND_TO_CANVAS[layer.blend];
       if (base) {
         const tmp = document.createElement("canvas"); tmp.width = c.width; tmp.height = c.height; const g = tmp.getContext("2d")!; g.scale(scale, scale);

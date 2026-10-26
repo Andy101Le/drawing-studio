@@ -81,6 +81,8 @@ export interface Provider {
   datasetThumb?(id: string, size?: number): string;
   datasetUpdate?(patch: { id: string; caption?: string; action?: string; name?: string; character?: string }): Promise<{ id: string; caption: string; issues: string[] }>;
   datasetRemove?(id: string): Promise<{ movedTo: string }>;
+  /** anime lineart of a picture (white lines on black) from the sidecar detector */
+  lineart?(image: string, width: number, height: number): Promise<string>;
   /** tagger suggestions for a kept image */
   datasetSuggest?(id: string): Promise<Array<{ tag: string; p: number }>>;
   /** sort flat kept images into action folders by caption */
@@ -114,6 +116,7 @@ export class SidecarProvider implements Provider {
   datasetThumb(id: string, size = 160) { return `${this.base}/dataset/thumb?id=${encodeURIComponent(id)}&size=${size}`; }
   datasetUpdate(patch: { id: string; caption?: string; action?: string; name?: string; character?: string }) { return this.json<{ id: string; caption: string; issues: string[] }>("/dataset/update", { method: "POST", body: JSON.stringify(patch) }); }
   datasetRemove(id: string) { return this.json<{ movedTo: string }>("/dataset/remove", { method: "POST", body: JSON.stringify({ id }) }); }
+  lineart(image: string, width: number, height: number) { return this.json<{ image: string }>("/lineart", { method: "POST", body: JSON.stringify({ image, width, height }) }).then((r) => r.image); }
   datasetSuggest(id: string) { return this.json<{ tags: Array<{ tag: string; p: number }> }>("/dataset/suggest", { method: "POST", body: JSON.stringify({ id }) }).then((r) => r.tags); }
   sampleKept(n: number) { return this.json<{ images: string[]; pool: number }>(`/dataset/sample?n=${n}`); }
 }

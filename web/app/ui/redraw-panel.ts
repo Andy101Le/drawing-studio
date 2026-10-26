@@ -5,25 +5,29 @@
 import type { AppState } from "./state.js";
 import { h, clear, field, slider } from "./dom.js";
 import { TRACE_DEFAULTS, type TraceParams } from "../engine/trace/trace-core.js";
-import { analyse, buildRedraw, layerPixels, scoreRedraw, sourcePixels, type RedrawReport, type RedrawStyle } from "../engine/trace/redraw.js";
+import { analyse, bakeRedraw, buildRedraw, layerPixels, scoreRedraw, sourcePixels, type RedrawReport, type RedrawStyle } from "../engine/trace/redraw.js";
+import type { JobRunner } from "../engine/ml.js";
 import type { Layer } from "../engine/document.js";
 import type { Region } from "../engine/ml.js";
 
 /** a picture handed over from elsewhere (the Generate tab's results) */
-export interface RedrawSource { image: string; region: (Region & { panelId?: number }) | null; name: string }
+export interface RedrawSource { image: string; region: (Region & { panelId?: number }) | null; name: string; /** preset options applied before an automatic run (Manga panel button) */ auto?: { style: RedrawStyle; ink: "auto" | "colour" | "black"; layers: "single" | "separate"; lines: "trace" | "detector" } }
 let pending: RedrawSource | null = null;
 export function setRedrawSource(app: AppState, s: RedrawSource): void { pending = s; app.emit("redraw-source"); app.emit("open-panel", "Redraw"); }
+/** one-click manga panel from a Generate result: manga look, black ink, detector lines, one layer, then run */
+export function redrawAsMangaPanel(app: AppState, s: RedrawSource): void { pending = { ...s, auto: { style: "manga", ink: "black", layers: "single", lines: "detector" } }; app.emit("redraw-source"); app.emit("open-panel", "Redraw"); app.emit("redraw-run"); }
 
 const KEY = "omni.redraw.v1";
-interface Saved { params: TraceParams; style: RedrawStyle; maxMpx: number; lpi: number; panelId: number; ink: "auto" | "colour" | "black" }
-const DEF: Saved = { params: { ...TRACE_DEFAULTS }, style: "colour", maxMpx: 2, lpi: 60, panelId: -2, ink: "auto" };
+interface Saved { params: TraceParams; style: RedrawStyle; maxMpx: number; lpi: number; panelId: number; ink: "auto" | "colour" | "black"; layers: "single" | "separate"; lines: "trace" | "detector" }
+const DEF: Saved = { params: { ...TRACE_DEFAULTS }, style: "colour", maxMpx: 2, lpi: 60, panelId: -2, ink: "auto", layers: "single", lines: "detector" };
 function load(): Saved { try { const s = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Saved>; return { ...DEF, ...s, params: { ...DEF.params, ...(s.params ?? {}) } }; } catch { return { ...DEF, params: { ...DEF.params } }; } }
 
 export function redrawPanel(app: AppState): HTMLElement {
   const root = h("div", { class: "redraw-tab" });
   const st = load(); const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* quota */ } };
-  let running: { cancel: () => void } | null = null; let stage = ""; let pct = 0; let error = "";
-  let report: (RedrawReport & { sourceLayer: Layer | null }) | null = null;
+  let running: { cancel: () => void } | null = null; let stage = ""; let pct = 0; let error = ""; let linesNote = "";
+  let report: (RedrawReport & { sourceLayer: Layer | null; single: Layer | null; built: { layers: Layer[]; group: Layer } | null; region: Region & { panelId?: number } }) | null = null;
+  const provider = () => (app as unknown as { ml?: JobRunner }).ml?.provider ?? null;
   let render = () => {};
 
   const panelBox = (id: number): (Region & { panelId: number }) | null => {
@@ -39,8 +43,9 @@ export function redrawPanel(app: AppState): HTMLElement {
   };
 
   const run = async () => {
-    error = ""; report = null;
+    error = ""; report = null; linesNote = "";
     const doc = app.doc; const src = pending; const srcLayer = src ? null : doc.activeLayer;
+    if (src?.auto) { st.style = src.auto.style; st.ink = src.auto.ink; st.layers = src.auto.layers; st.lines = src.auto.lines; save(); }
     if (!src && (!srcLayer || srcLayer.kind !== "raster")) { error = "Pick a raster layer with a picture on it (or press Redraw on a Generate result)."; render(); return; }
     // area: chosen panel, else the result's own panel, else the layer's content / the page
     let region: (Region & { panelId?: number }) | null = st.panelId >= 0 ? panelBox(st.panelId) : null;
@@ -58,7 +63,21 @@ export function redrawPanel(app: AppState): HTMLElement {
       img = sp.data; mask = sp.mask;
       if (sp.coverage < 0.002) { error = "That layer has no visible pixels in the area."; stage = ""; render(); return; }
     } catch (e) { error = (e as Error).message; stage = ""; render(); return; }
-    const job = analyse(img, st.params, (s, p) => { stage = s; pct = p; render(); }, mask); running = job;
+    // lines from the sidecar's anime lineart detector when asked and online; otherwise the built-in tracer
+    let lines: Uint8Array | null = null;
+    const pv = provider();
+    if (st.lines === "detector" && pv?.lineart) {
+      stage = "lineart (sidecar)"; pct = 0.03; render();
+      try {
+        const c0 = document.createElement("canvas"); c0.width = img.width; c0.height = img.height; c0.getContext("2d")!.putImageData(img, 0, 0);
+        const url = await pv.lineart(c0.toDataURL("image/png"), img.width, img.height);
+        const li = new Image(); await new Promise<void>((res, rej) => { li.onload = () => res(); li.onerror = () => rej(new Error("lineart")); li.src = url; });
+        const c1 = document.createElement("canvas"); c1.width = img.width; c1.height = img.height; const g1 = c1.getContext("2d", { willReadFrequently: true })!; g1.drawImage(li, 0, 0, img.width, img.height);
+        const d = g1.getImageData(0, 0, img.width, img.height).data; lines = new Uint8Array(img.width * img.height);
+        for (let i = 0; i < lines.length; i++) lines[i] = d[i * 4]!;
+      } catch { lines = null; linesNote = "detector unavailable, traced lines used"; }
+    }
+    const job = analyse(img, st.params, (s, p) => { stage = s; pct = p; render(); }, mask, lines); running = job;
     let r;
     try { r = await job.promise; } catch (e) { running = null; stage = ""; error = (e as Error).message === "cancelled" ? "" : `Analysis failed: ${(e as Error).message}`; render(); return; }
     running = null;
@@ -70,17 +89,41 @@ export function redrawPanel(app: AppState): HTMLElement {
     const byName = (n: string) => built.layers.find((l) => l.name === n && l.parent === built.group.id) ?? null;
     const colour = ["Flats", "Shadows", "Light", "Soft shading", "Ink"].map(byName).filter((l): l is Layer => !!l);
     const score = scoreRedraw(doc, img, r, region, colour, byName("Ink")!, mask);
-    // one undo step for the whole redraw
-    const layers = built.layers; const list = () => app.doc.drawing.layers; const at = layers.map((l) => list().indexOf(l));
-    app.history.pushCustom("Redraw", () => { for (const l of layers) { const i = list().indexOf(l); if (i >= 0) list().splice(i, 1); } app.invalidate(); app.emit("layers"); },
-      () => { layers.forEach((l, j) => list().splice(Math.min(at[j]!, list().length), 0, l)); app.invalidate(); app.emit("layers"); });
+    const list = () => app.doc.drawing.layers;
+    let single: Layer | null = null;
+    if (st.layers === "single") {
+      // everything on one layer: composite the group (tones baked as dot screens) and drop the parts
+      stage = "flattening"; pct = 0.985; render(); await new Promise((res) => setTimeout(res, 0));
+      single = bakeRedraw(doc, (d, sc, ids) => app.renderer.flatten(d, sc, ids), built, region, name);
+      for (const l of built.layers) { const i = list().indexOf(l); if (i >= 0) list().splice(i, 1); }
+      const one = single; const pos = list().indexOf(one);
+      app.history.pushCustom("Redraw", () => { const i = list().indexOf(one); if (i >= 0) list().splice(i, 1); app.invalidate(); app.emit("layers"); },
+        () => { list().splice(Math.min(pos, list().length), 0, one); app.invalidate(); app.emit("layers"); });
+      app.doc.activeLayerId = one.id;
+    } else {
+      // one undo step for the whole redraw
+      const layers = built.layers; const at = layers.map((l) => list().indexOf(l));
+      app.history.pushCustom("Redraw", () => { for (const l of layers) { const i = list().indexOf(l); if (i >= 0) list().splice(i, 1); } app.invalidate(); app.emit("layers"); },
+        () => { layers.forEach((l, j) => list().splice(Math.min(at[j]!, list().length), 0, l)); app.invalidate(); app.emit("layers"); });
+      app.doc.activeLayerId = byName("Ink")?.id ?? app.doc.activeLayerId;
+    }
     if (srcLayer) srcLayer.visible = false; // compare with the Compare button
-    app.doc.activeLayerId = byName("Ink")?.id ?? app.doc.activeLayerId;
-    report = { layers, group: built.group, stats: { ...r.stats, workW: r.w, workH: r.h, buildMs, dabs: built.dabs }, ...score, sourceLayer: srcLayer };
+    report = { layers: built.layers, group: built.group, stats: { ...r.stats, workW: r.w, workH: r.h, buildMs, dabs: built.dabs }, ...score, sourceLayer: srcLayer, single, built, region };
     pending = null; stage = ""; pct = 0;
     app.invalidate(); app.emit("layers"); render();
   };
 
+  /** switch the redraw between its colour and manga layers; a single-layer redraw is re-baked in place */
+  const setLook = (rp: NonNullable<typeof report>, look: "colour" | "manga") => {
+    for (const l of rp.layers) { if (["Flats", "Shadows", "Light", "Soft shading"].includes(l.name)) l.visible = look === "colour"; if (l.name === "Screentone") l.visible = look === "manga"; }
+    if (rp.single && rp.built) {
+      const fresh = bakeRedraw(app.doc, (d, sc, ids) => app.renderer.flatten(d, sc, ids), rp.built, rp.region, rp.single.name);
+      // move the baked tiles into the existing layer so its id, position and undo entry stay valid
+      const list = app.doc.drawing.layers; const i = list.indexOf(fresh); if (i >= 0) list.splice(i, 1);
+      rp.single.tiles.clear(); for (const [k, t] of fresh.tiles) rp.single.tiles.set(k, t); rp.single.generation++;
+    }
+    app.invalidate(); app.emit("layers");
+  };
   const p = st.params;
   const set = <K extends keyof TraceParams>(k: K, v: TraceParams[K]) => { p[k] = v; save(); };
   render = () => {
@@ -94,7 +137,12 @@ export function redrawPanel(app: AppState): HTMLElement {
         h("option", { value: "-2", selected: st.panelId < 0 }, "Auto"), ...panels.map((q, i) => h("option", { value: String(q.id), selected: st.panelId === q.id }, `Panel ${i + 1}`)))),
       field("Look", h("select", { title: "Redraw look", "data-help": "Colour: flats, shadows and light visible. Manga: ink and screentone visible, colour layers hidden (still there to switch on).", onChange: (e: Event) => { st.style = (e.target as HTMLSelectElement).value as RedrawStyle; save(); } },
         h("option", { value: "colour", selected: st.style === "colour" }, "Colour (cel)"), h("option", { value: "manga", selected: st.style === "manga" }, "Manga (ink + tone)"))),
+      field("Layers", h("select", { title: "Redraw layers", "data-help": "One layer: the whole redraw lands on a single raster layer (tones baked as dot screens), so there is nothing to scramble through. Separate: a group with Ink, Flats, Shadows, Light, Soft shading and Screentone layers for editing each part.", onChange: (e: Event) => { st.layers = (e.target as HTMLSelectElement).value as Saved["layers"]; save(); } },
+        h("option", { value: "single", selected: st.layers === "single" }, "One layer"), h("option", { value: "separate", selected: st.layers === "separate" }, "Separate layers (group)"))),
       h("div", { class: "sep" }), h("h3", {}, "Lines"),
+      field("Lines from", h("select", { title: "Line source", "data-help": "Anime lineart detector: the sidecar's lineart_anime model picks the lines a manga inker would, cleaner on painted images; needs the sidecar. Traced: the built-in detector (works offline).", onChange: (e: Event) => { st.lines = (e.target as HTMLSelectElement).value as Saved["lines"]; save(); } },
+        h("option", { value: "detector", selected: st.lines === "detector" }, "anime lineart detector (sidecar)"), h("option", { value: "trace", selected: st.lines === "trace" }, "traced here"))),
+      linesNote ? h("p", { class: "dim", style: { fontSize: "11px", margin: "2px 0", color: "#d9b65c" } }, linesNote) : null,
       field("Ink colour", h("select", { title: "Ink colour", "data-help": "Auto: traced colours for Colour, black for Manga. Coloured line art (red glasses, brown hair lines) keeps its colour unless you choose Black.", onChange: (e: Event) => { st.ink = (e.target as HTMLSelectElement).value as Saved["ink"]; save(); } },
         ...([["auto", "Auto"], ["colour", "As traced"], ["black", "Black"]] as const).map(([v, l]) => h("option", { value: v, selected: st.ink === v }, l)))),
       field("Line pickup", slider(0.1, 0.95, 0.05, p.lineSensitivity, (v) => set("lineSensitivity", v)), () => p.lineSensitivity.toFixed(2)),
@@ -129,13 +177,14 @@ export function redrawPanel(app: AppState): HTMLElement {
             `time          analysis ${Object.values(rp.stats.ms).reduce((a, b) => a + b, 0)} ms · drawing ${rp.stats.buildMs} ms at ${rp.stats.workW}×${rp.stats.workH}`),
           h("div", { class: "row", style: { gap: "6px", marginTop: "6px", flexWrap: "wrap" } },
             rp.sourceLayer ? h("button", { title: "Compare with source", "data-help": "Toggle between the redraw and the original layer.", onClick: () => { const s = rp.sourceLayer!; s.visible = !s.visible; rp.group.visible = !s.visible; app.invalidate(); app.emit("layers"); } }, "Compare") : null,
-            h("button", { title: "Show colour layers", onClick: () => { for (const l of rp.layers) { if (["Flats", "Shadows", "Light", "Soft shading"].includes(l.name)) l.visible = true; if (l.name === "Screentone") l.visible = false; } app.invalidate(); app.emit("layers"); } }, "Colour"),
-            h("button", { title: "Show manga layers", onClick: () => { for (const l of rp.layers) { if (["Flats", "Shadows", "Light", "Soft shading"].includes(l.name)) l.visible = false; if (l.name === "Screentone") l.visible = true; } app.invalidate(); app.emit("layers"); } }, "Manga"),
+            h("button", { title: "Show colour layers", onClick: () => { setLook(rp, "colour"); } }, "Colour"),
+            h("button", { title: "Show manga layers", onClick: () => { setLook(rp, "manga"); } }, "Manga"),
             h("button", { title: "More detail", "data-help": "Run again with more colours, smaller regions and finer lines.", onClick: () => { p.detail = Math.min(48, p.detail + 8); p.minRegion = p.minRegion ? Math.max(0, p.minRegion - 30) : 0; p.lineSensitivity = Math.min(0.9, p.lineSensitivity + 0.05); st.maxMpx = Math.max(st.maxMpx, 3.5); save(); render(); } }, "More detail…")));
       })() : null,
     );
   };
   app.on("redraw-source", () => { report = null; render(); });
+  app.on("redraw-run", () => { if (!running && !stage) void run(); });
   app.on("panels", () => { if (root.isConnected) render(); });
   app.on("layers", () => { if (!stage && root.isConnected && !pending) render(); });
   render();

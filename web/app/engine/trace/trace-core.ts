@@ -420,7 +420,12 @@ export function kmeans(feat: Float32Array, n: number, dim: number, k: number, it
 export function nearestCentre(C: Float32Array, k: number, dim: number, v: ArrayLike<number>): number { let best = 0, bd = Infinity; for (let c = 0; c < k; c++) { let dd = 0; for (let d = 0; d < dim; d++) { const t = v[d]! - C[c * dim + d]!; dd += t * t; } if (dd < bd) { bd = dd; best = c; } } return best; }
 
 // ---------------------------------------------------------------- main
-export function trace(rgba: Uint8ClampedArray, w: number, h: number, params: Partial<TraceParams> = {}, progress?: (stage: string, pct: number) => void, mask: Uint8Array | null = null): TraceResult {
+/**
+ * `lines`, when given, replaces the built-in line detection: a w x h map of line strength 0..255
+ * (white lines on black, as the sidecar's anime lineart detector returns). Everything else, flats,
+ * shading, tones, still comes from the picture.
+ */
+export function trace(rgba: Uint8ClampedArray, w: number, h: number, params: Partial<TraceParams> = {}, progress?: (stage: string, pct: number) => void, mask: Uint8Array | null = null, lines: Uint8Array | null = null): TraceResult {
   const P = { ...TRACE_DEFAULTS, ...params }; const N = w * h; const ms: Record<string, number> = {}; let t0 = Date.now();
   // `mask` marks the pixels the picture covers (alpha >= 50%); outside it nothing is traced or scored
   const inMask = (i: number) => !mask || mask[i] === 1;
@@ -448,14 +453,17 @@ export function trace(rgba: Uint8ClampedArray, w: number, h: number, params: Par
   const sens = Math.min(1, Math.max(0, P.lineSensitivity));
   const T = 30 - 22 * sens, abs = 8 + 14 * sens;
   let ink = new Uint8Array(N);
-  for (let i = 0; i < N; i++) { const d = bg[i]!; if (((d > T && L[i]! < 72) || L[i]! < abs) && inMask(i)) ink[i] = 1; }
+  if (lines) { for (let i = 0; i < N; i++) if (lines[i]! > 90 && inMask(i)) ink[i] = 1; }
+  else for (let i = 0; i < N; i++) { const d = bg[i]!; if (((d > T && L[i]! < 72) || L[i]! < abs) && inMask(i)) ink[i] = 1; }
   { const { lab, sizes } = components(ink, w, h); const minA = Math.max(3, Math.round(4 * scale * scale)); for (let i = 0; i < N; i++) if (ink[i] && sizes[lab[i]!]! < minA) ink[i] = 0; }
   const inkMask = ink.slice();
   const dist = edt(ink, w, h);
   // The loose mask includes anti-aliased fringes: right for topology, too wide for width. The core
   // (clearly dark) mask gives line widths and decides what is a solid black area, so densely
   // overlapping hatching is not mistaken for a fill.
-  const inkCore = new Uint8Array(N); for (let i = 0; i < N; i++) { const d = bg[i]!; if (((d > T * 1.7 && L[i]! < 60) || L[i]! < abs) && inMask(i)) inkCore[i] = 1; }
+  const inkCore = new Uint8Array(N);
+  if (lines) { for (let i = 0; i < N; i++) if (lines[i]! > 170 && inMask(i)) inkCore[i] = 1; }
+  else for (let i = 0; i < N; i++) { const d = bg[i]!; if (((d > T * 1.7 && L[i]! < 60) || L[i]! < abs) && inMask(i)) inkCore[i] = 1; }
   const distCore = edt(inkCore, w, h);
   // solid areas: the core ink that survives an opening by solidInk px
   const thick = P.solidInk * Math.max(1, scale);
