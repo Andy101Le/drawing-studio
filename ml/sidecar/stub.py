@@ -1,5 +1,5 @@
 """Contract stub: the same HTTP surface as the real sidecar with a placeholder image, no model. Used by tests and by anyone wiring the app without a GPU."""
-import io, json, base64, io, struct, zlib, threading, time, uuid, sys
+import io, json, base64, struct, zlib, threading, time, uuid, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 def png(w, h, seed):
