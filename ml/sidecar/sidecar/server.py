@@ -491,18 +491,33 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         if verdict not in ("liked", "rejected"): raise HTTPException(400, "verdict must be liked or rejected")
         img = body.get("image")
         if not img: raise HTTPException(400, "image required")
-        from .actions import action_for
+        from .actions import action_for, ACTIONS, slug
         meta = dict(body.get("meta") or {})
         caption = (body.get("caption") or meta.get("prompt") or "").strip()
-        # kept images file under dataset/liked/<action>/ so the set can be balanced per action
-        action = action_for(caption) if verdict == "liked" else ""
+        # kept images file under dataset/liked/<action>/ so the set can be balanced per action;
+        # the app may name the image and pick the folder, otherwise both come from the caption
+        action = (body.get("action") or "").strip().lower()
+        if verdict != "liked": action = ""
+        elif action not in ACTIONS + ["misc"]: action = action_for(caption)
         folder = os.path.abspath(os.path.join(DATA, verdict, action)); os.makedirs(folder, exist_ok=True)
         stamp = str(int(time.time() * 1000))
-        _b64_to_image(img).save(os.path.join(folder, stamp + ".png"))
-        meta["verdict"] = verdict; meta["model"] = (state["engine"].model if state["engine"] else model); meta["at"] = stamp; meta["caption"] = caption; meta["action"] = action
-        with open(os.path.join(folder, stamp + ".json"), "w", encoding="utf-8") as f: json.dump(meta, f, indent=1)
-        with open(os.path.join(folder, stamp + ".txt"), "w", encoding="utf-8") as f: f.write(caption)
-        return dataset_stats()
+        name = slug(body.get("name") or "")
+        stem = f"{name}-{stamp[-6:]}" if name else stamp
+        while os.path.exists(os.path.join(folder, stem + ".png")): stem += "x"
+        _b64_to_image(img).save(os.path.join(folder, stem + ".png"))
+        meta["verdict"] = verdict; meta["model"] = (state["engine"].model if state["engine"] else model); meta["at"] = stamp; meta["caption"] = caption; meta["action"] = action; meta["name"] = name
+        with open(os.path.join(folder, stem + ".json"), "w", encoding="utf-8") as f: json.dump(meta, f, indent=1)
+        with open(os.path.join(folder, stem + ".txt"), "w", encoding="utf-8") as f: f.write(caption)
+        out = dataset_stats(); out["saved"] = os.path.join(verdict, action, stem + ".png").replace("\\", "/"); return out
+    @app.get("/dataset/actions")
+    def dataset_actions():
+        """The action folders the app can offer in the Keep dialog, with the detector for a caption."""
+        from .actions import ACTIONS
+        return {"actions": ACTIONS + ["misc"]}
+    @app.post("/dataset/guess")
+    def dataset_guess(body: dict):
+        from .actions import action_for
+        return {"action": action_for(body.get("caption") or "")}
     @app.get("/dataset/stats")
     def dataset_stats():
         import os

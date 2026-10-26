@@ -88,12 +88,31 @@ export function generatePanel(app: AppState): HTMLElement {
   const refreshTokens = () => { if (!runner.provider.tokens) { tokenInfo = null; return; } clearTimeout(tokenTimer); tokenTimer = window.setTimeout(async () => { try { const c = composePrompt(); tokenInfo = await runner.provider.tokens!(c.prompt, c.negative, st.qualityTags); } catch { tokenInfo = null; } const el = root.querySelector("[data-tokens]"); if (el) el.replaceWith(tokenMeter()); }, 350); };
   let stats: DatasetStats | null = null;
   const refreshStats = async () => { try { if (runner.provider.datasetStats) stats = await runner.provider.datasetStats(); } catch { stats = null; } render(); };
-  const rate = async (v: "liked" | "rejected", j: { result: { image: string; seed: number } | null; req: GenRequest }) => {
+  type Job = { result: { image: string; seed: number } | null; req: GenRequest; id?: string };
+  /** the Keep dialog: name, action folder and caption for one result, before it goes into the training set */
+  let keep: { job: Job; name: string; action: string; caption: string; guessed: string; busy: boolean; saved?: string } | null = null;
+  let actionList: string[] = [];
+  const captionFor = (j: Job) => j.req.prompt || [...st.tags, st.prompt].filter(Boolean).join(", ");
+  const openKeep = async (j: Job) => {
+    if (!j.result) return;
+    keep = { job: j, name: "", action: "misc", caption: captionFor(j), guessed: "misc", busy: false }; render();
+    try {
+      if (!actionList.length && runner.provider.datasetActions) actionList = await runner.provider.datasetActions();
+      if (runner.provider.guessAction) { const g = await runner.provider.guessAction(keep.caption); if (keep && keep.job === j) { keep.guessed = g; keep.action = g; } }
+    } catch { /* offline: the sidecar still picks the folder from the caption */ }
+    render();
+    const el = root.querySelector<HTMLInputElement>("#keep-name"); el?.focus();
+  };
+  const rate = async (v: "liked" | "rejected", j: Job, extra?: { name?: string; action?: string; caption?: string }) => {
     if (!j.result || !runner.provider.rate) return;
     const meta = { ...j.req, control: undefined, init: undefined, reference: undefined, references: undefined, controls: undefined, mask: undefined, seed: j.result.seed };
-    // caption = the prompt that actually made it (tags, manga look and all), so training learns the same words
-    try { stats = await runner.provider.rate(j.result.image, v, j.req.prompt || [...st.tags, st.prompt].filter(Boolean).join(", "), meta); render(); }
-    catch (e) { alert((e as Error).message); }
+    // caption = the prompt that actually made it (tags, manga look and all) unless edited in the Keep dialog, so training learns the same words
+    try {
+      const r = await runner.provider.rate(j.result.image, v, extra?.caption ?? captionFor(j), meta, extra ? { name: extra.name ?? "", action: extra.action ?? "" } : undefined);
+      stats = r; if (keep && keep.job === j) { keep.saved = r.saved ?? "saved"; keep.busy = false; }
+      render();
+    }
+    catch (e) { if (keep) keep.busy = false; alert((e as Error).message); }
   };
   const refreshModels = async () => { try { if (runner.provider.models) { const m = await runner.provider.models(); presets = m.presets; currentModel = m.current; } if (runner.provider.loras) loraNames = await runner.provider.loras(); if (runner.provider.loraTriggers) loraTriggers = await runner.provider.loraTriggers(); } catch { presets = []; loraNames = []; } render(); refreshTokens(); };
   const newSeed = () => (crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff);
@@ -327,12 +346,32 @@ export function generatePanel(app: AppState): HTMLElement {
           j.result ? h("button", { title: "Add as layer", "data-help": "Put this result on a new layer above the active one; the layer remembers prompt, seed and settings.", onClick: () => void addAsLayer(j.result!.image, `Gen ${j.req.seed}`, j.req, j.result!.seed, j.result!.model) }, "Add as layer") : null,
           j.result && runner.provider.upscale ? h("button", { title: "Upscale 2×", "data-help": "Real-ESRGAN anime upscale to print resolution, then add as a layer.", onClick: async () => { try { const r = await runner.provider.upscale!(j.result!.image, 2); await addAsLayer(r.image, `Gen ${j.req.seed} ×2`, j.req, j.result!.seed, j.result!.model); } catch (e) { alert((e as Error).message); } } }, "Upscale 2×") : null,
           j.result ? h("button", { title: "Use as reference", onClick: () => { reference = j.result!.image; st.mode = "reference"; save(); render(); } }, "Reference") : null,
-          j.result && runner.provider.rate ? h("button", { title: "Keep", "data-help": "Save this image and its prompt into the training set on your machine. With 20 or more, train_lora.py turns them into a personal style.", onClick: () => void rate("liked", j) }, "✓ Keep") : null,
+          j.result && runner.provider.rate ? h("button", { title: "Keep", "data-help": "Name this image, pick its action folder and check the caption, then save it into the training set on your machine. The caption is what the model learns from. Shift-click keeps it at once with the prompt as caption.", onClick: (e: MouseEvent) => { if (e.shiftKey) void rate("liked", j); else void openKeep(j); } }, "✓ Keep") : null,
           j.result && runner.provider.rate ? h("button", { title: "Discard", "data-help": "File this as a bad result. Kept as the negative half for preference tuning; it is not used by the style trainer.", onClick: () => void rate("rejected", j) }, "✗ Discard") : null,
           j.result ? h("button", { title: "Redraw with OMNI-CELL tools", "data-help": "Rebuild this result on new layers with the app's own tools (Trace Pen ink, flats, shadows, light, screentone) in the Redraw tab.", onClick: () => setRedrawSource(app, { image: j.result!.image, region: (j.req.region as (Region & { panelId?: number }) | undefined) ?? null, name: `seed ${j.result!.seed}` }) }, "Redraw") : null,
           j.result ? h("button", { title: "Seed +1", "data-help": "Run the same job with the next seed: a close variation of this result.", onClick: () => { void runner.run({ ...j.req, seed: j.req.seed + 1, retry: 1 } as GenRequest); } }, "Seed +1") : null,
           j.status === "running" || j.status === "queued" ? h("button", { title: "Cancel", onClick: () => void runner.cancel(j) }, "Cancel") : null,
-          j.error ? h("span", { class: "dim" }, j.error) : null))),
+          j.error ? h("span", { class: "dim" }, j.error) : null),
+        keep && keep.job === j ? (() => {
+          const k = keep;
+          const done = !!k.saved;
+          return h("div", { class: "keep-box", style: { border: "1px solid #555", borderRadius: "4px", padding: "6px", marginTop: "6px", fontSize: "11.5px" } },
+            done ? h("div", {}, h("span", { class: "chip ok" }, "kept"), h("span", { class: "mono dim", style: { marginLeft: "6px" } }, k.saved!), h("button", { style: { marginLeft: "8px" }, title: "Close", onClick: () => { keep = null; render(); } }, "Close"))
+            : h("div", {},
+              h("div", { class: "row", style: { gap: "6px", alignItems: "center", marginBottom: "4px" } },
+                h("label", { style: { width: "52px" } }, "Name"),
+                h("input", { id: "keep-name", type: "text", value: k.name, placeholder: "e.g. trooper sword swing rooftop", style: { flex: "1" }, title: "Image name", "data-help": "Becomes the file name (lower case, hyphens). Leave empty for a timestamp.", onInput: (e: Event) => { k.name = (e.target as HTMLInputElement).value; }, onKeydown: (e: KeyboardEvent) => { if (e.key === "Enter") { k.busy = true; render(); void rate("liked", j, { name: k.name, action: k.action, caption: k.caption }); } if (e.key === "Escape") { keep = null; render(); } } })),
+              h("div", { class: "row", style: { gap: "6px", alignItems: "center", marginBottom: "4px" } },
+                h("label", { style: { width: "52px" } }, "Action"),
+                h("select", { title: "Action folder", "data-help": "The folder under dataset/liked. The trainer draws every folder equally, so this is how a rare action gets its share.", onChange: (e: Event) => { k.action = (e.target as HTMLSelectElement).value; } },
+                  ...(actionList.length ? actionList : ["running", "walking", "jumping", "fighting", "sword", "shooting", "sneaking", "talking", "death", "disarming", "sitting", "standing", "misc"]).map((a) => h("option", { value: a, selected: a === k.action }, a + (a === k.guessed ? " (from caption)" : "")))),
+                stats?.actions ? h("span", { class: "dim" }, `${stats.actions[k.action] ?? 0} so far`) : null),
+              h("div", { class: "field stack" }, h("label", { title: "Caption", "data-help": "What the model will learn from this image. Keep the tags that are true of the picture; remove the ones that did not come out; add what you see that the prompt did not say." }, "Caption (what it learns)"),
+                h("textarea", { rows: 3, style: { width: "100%", resize: "vertical", fontSize: "11px" }, onInput: (e: Event) => { k.caption = (e.target as HTMLTextAreaElement).value; } }, k.caption)),
+              h("div", { class: "row", style: { gap: "6px", marginTop: "4px" } },
+                h("button", { class: "primary", disabled: k.busy, title: "Save to training set", onClick: () => { k.busy = true; render(); void rate("liked", j, { name: k.name, action: k.action, caption: k.caption }); } }, k.busy ? "Saving…" : "Save to training set"),
+                h("button", { title: "Cancel keep", onClick: () => { keep = null; render(); } }, "Cancel"))));
+        })() : null)),
       runner.jobs.length ? null : h("p", { class: "dim", style: { fontSize: "11px" } }, "No jobs yet."));
   };
   render(); void checkHealth();

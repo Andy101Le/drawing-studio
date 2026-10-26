@@ -73,8 +73,11 @@ or MISSING. Any Hugging Face id or local `.safetensors` path works as `--model`.
 
 ## Teaching it your taste (accept / reject)
 
-Every result in the Generate tab has **Keep** and **Discard**. Keep writes the image plus its prompt
-as a caption to `dataset/liked/<action>/` (the action comes from the caption: running, shooting,
+Every result in the Generate tab has **Keep** and **Discard**. Keep opens a small form: a name
+(becomes the file name), the action folder (guessed from the caption, change it if it is wrong) and
+the caption itself, which is what the model learns from, so trim the tags that did not come out
+and add what you see. Shift-click Keep skips the form. The image plus its caption go to
+`dataset/liked/<action>/<name>-<stamp>.png` (.json and .txt beside it) (the action comes from the caption: running, shooting,
 sword, sneaking and so on, `misc` when there is none), Discard to `dataset/rejected/`;
 `GET /dataset/stats` reports the counts per action. Nothing leaves the machine. Images kept with an
 older version sit flat in `dataset/liked`; the Generate tab offers a button to sort them.

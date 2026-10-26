@@ -64,7 +64,11 @@ export interface Provider {
   tokens?(prompt: string, negative: string, qualityTags: boolean): Promise<{ prompt: number; negative: number; chunk: number }>;
   tag?(image: string): Promise<Array<{ tag: string; p: number }>>;
   upscale?(image: string, scale: number): Promise<{ image: string; width: number; height: number }>;
-  rate?(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown): Promise<DatasetStats>;
+  rate?(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown, extra?: { name?: string; action?: string }): Promise<DatasetStats & { saved?: string }>;
+  /** action folders the Keep dialog can offer */
+  datasetActions?(): Promise<string[]>;
+  /** the folder the sidecar would pick for a caption */
+  guessAction?(caption: string): Promise<string>;
   datasetStats?(): Promise<DatasetStats>;
   /** sort flat kept images into action folders by caption */
   organizeDataset?(): Promise<DatasetStats>;
@@ -88,7 +92,9 @@ export class SidecarProvider implements Provider {
   tokens(prompt: string, negative: string, qualityTags: boolean) { return this.json<{ prompt: number; negative: number; chunk: number }>("/tokens", { method: "POST", body: JSON.stringify({ prompt, negative, qualityTags }) }); }
   tag(image: string) { return this.json<{ tags: Array<{ tag: string; p: number }> }>("/tag", { method: "POST", body: JSON.stringify({ image }) }).then((r) => r.tags); }
   upscale(image: string, scale: number) { return this.json<{ image: string; width: number; height: number }>("/upscale", { method: "POST", body: JSON.stringify({ image, scale }) }); }
-  rate(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown) { return this.json<DatasetStats>("/dataset/add", { method: "POST", body: JSON.stringify({ image, verdict, caption, meta }) }); }
+  rate(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown, extra?: { name?: string; action?: string }) { return this.json<DatasetStats & { saved?: string }>("/dataset/add", { method: "POST", body: JSON.stringify({ image, verdict, caption, meta, ...(extra ?? {}) }) }); }
+  datasetActions() { return this.json<{ actions: string[] }>("/dataset/actions").then((r) => r.actions); }
+  guessAction(caption: string) { return this.json<{ action: string }>("/dataset/guess", { method: "POST", body: JSON.stringify({ caption }) }).then((r) => r.action); }
   datasetStats() { return this.json<DatasetStats>("/dataset/stats"); }
   organizeDataset() { return this.json<DatasetStats>("/dataset/organize", { method: "POST", body: "{}" }); }
   sampleKept(n: number) { return this.json<{ images: string[]; pool: number }>(`/dataset/sample?n=${n}`); }

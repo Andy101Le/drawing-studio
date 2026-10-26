@@ -2,7 +2,7 @@
 import json, os, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from PIL import Image
-from sidecar.actions import action_for, organize, counts, caption_of
+from sidecar.actions import action_for, organize, counts, caption_of, slug
 
 def test_action_from_caption_order_and_emphasis():
     assert action_for("masterpiece, 1boy, (running:1.2), shooting, rain") == "running"
@@ -37,3 +37,9 @@ def test_organize_moves_byte_identical_copies_aside():
     assert r["duplicates"] == 2 and r["moved"] == 2
     assert counts(liked) == {"misc": 1, "running": 1}
     assert len(os.listdir(os.path.join(d, "duplicates"))) == 4
+
+def test_slug_is_file_safe():
+    assert slug("Sword swing, rooftop!") == "sword-swing-rooftop"
+    assert slug("  ") == ""
+    assert slug("../../etc/passwd") == "etc-passwd"
+    assert len(slug("a" * 100)) == 48

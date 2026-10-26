@@ -53,6 +53,11 @@ def action_for(caption: str) -> str:
             if f" {w} " in joined or f" {w}," in joined: return name
     return "misc"
 
+def slug(name: str, limit: int = 48) -> str:
+    """A file-safe stem from a name the user typed: lower case, words joined by hyphens, nothing else."""
+    words = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return "-".join(words)[:limit].strip("-")
+
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".avif")
 
 def walk_images(root: str):

@@ -185,3 +185,7 @@ What would move quality more than any of this, in order, and why it is not in th
 
 None of the training changes have been run on a GPU here; the classifier and the organise step have unit tests (`python -m pytest ml/sidecar/tests`), and the app side is covered by the Playwright script `actions.py` against the stub.
 
+### Naming what goes into the set (loop 20b)
+
+Keep now opens a form on the result: name, action folder and caption. The sidecar takes `name` and `action` on `POST /dataset/add` (`/dataset/actions` lists the folders, `/dataset/guess` returns the folder the caption implies), slugs the name to a file-safe stem and appends six digits of the timestamp so two "sword swing" images never collide. The caption box is prefilled with the prompt that made the image; editing it is the point, since the image only teaches what its caption says. Shift-click keeps at once with the prompt as caption, as before. Playwright `keep.py` covers the dialog; `test_slug_is_file_safe` covers the stem.
+

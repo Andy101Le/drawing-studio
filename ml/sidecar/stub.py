@@ -29,6 +29,7 @@ class H(BaseHTTPRequestHandler):
             out = ["data:image/png;base64," + __import__("base64").b64encode(png(64, 64, k)).decode() for k in (3, 4)]
             return self._send(200, {"images": out, "pool": LIKED[0]})
         if self.path == "/dataset/stats": return self._send(200, stats())
+        if self.path == "/dataset/actions": return self._send(200, {"actions": ["running", "walking", "jumping", "fighting", "sword", "shooting", "sneaking", "talking", "death", "disarming", "sitting", "standing", "misc"]})
         if self.path.startswith("/jobs/"):
             j = jobs.get(self.path.split("/")[2])
             if not j: return self._send(404, {"error": "unknown job"})
@@ -45,7 +46,9 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/dataset/add":
             if body.get("verdict") == "liked": LIKED[0] += 1
             else: LIKED[1] += 1
-            return self._send(200, stats())
+            out = stats(); out["saved"] = f"{body.get('verdict')}/{body.get('action') or 'standing'}/{body.get('name') or '1792'}-123456.png"; return self._send(200, out)
+        if self.path == "/dataset/guess":
+            cap = (body.get("caption") or "").lower(); return self._send(200, {"action": "running" if "running" in cap else "sword" if "sword" in cap or "katana" in cap else "misc"})
         if self.path == "/dataset/organize": return self._send(200, stats())
         if self.path == "/tokens":
             words = lambda t: int(len((t or "").replace(",", " ").split()) * 1.3)
