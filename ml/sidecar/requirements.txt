@@ -17,3 +17,4 @@ basicsr==1.4.2
 psutil==6.0.0
 peft==0.12.0
 datasets==2.21.0
+pytest>=8

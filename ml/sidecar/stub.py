@@ -12,6 +12,9 @@ def png(w, h, seed):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
 
 jobs = {}
+def stats():
+    acts = {"standing": max(0, LIKED[0] - 7), "running": 4, "shooting": 3}
+    return {"path": "C:\\omni-cell\\ml\\sidecar\\dataset", "liked": LIKED[0], "rejected": LIKED[1], "readyToTrain": LIKED[0] >= 20, "actions": acts, "thin": ["walking", "jumping", "fighting", "sword", "sneaking", "talking", "death", "disarming", "sitting"], "unsorted": 0}
 LIKED = [3, 1]
 class H(BaseHTTPRequestHandler):
     def _send(self, code, obj):
@@ -25,7 +28,7 @@ class H(BaseHTTPRequestHandler):
         if self.path.startswith("/dataset/sample"):
             out = ["data:image/png;base64," + __import__("base64").b64encode(png(64, 64, k)).decode() for k in (3, 4)]
             return self._send(200, {"images": out, "pool": LIKED[0]})
-        if self.path == "/dataset/stats": return self._send(200, {"path": "C:\\omni-cell\\ml\\sidecar\\dataset", "liked": LIKED[0], "rejected": LIKED[1], "readyToTrain": LIKED[0] >= 20})
+        if self.path == "/dataset/stats": return self._send(200, stats())
         if self.path.startswith("/jobs/"):
             j = jobs.get(self.path.split("/")[2])
             if not j: return self._send(404, {"error": "unknown job"})
@@ -42,7 +45,8 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/dataset/add":
             if body.get("verdict") == "liked": LIKED[0] += 1
             else: LIKED[1] += 1
-            return self._send(200, {"path": "C:\\omni-cell\\ml\\sidecar\\dataset", "liked": LIKED[0], "rejected": LIKED[1], "readyToTrain": LIKED[0] >= 20})
+            return self._send(200, stats())
+        if self.path == "/dataset/organize": return self._send(200, stats())
         if self.path == "/tokens":
             words = lambda t: int(len((t or "").replace(",", " ").split()) * 1.3)
             return self._send(200, {"prompt": words(body.get("prompt")) + 4, "negative": words(body.get("negative")) + 12, "chunk": 75})

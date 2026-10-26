@@ -74,8 +74,13 @@ or MISSING. Any Hugging Face id or local `.safetensors` path works as `--model`.
 ## Teaching it your taste (accept / reject)
 
 Every result in the Generate tab has **Keep** and **Discard**. Keep writes the image plus its prompt
-as a caption to `dataset/liked/`, Discard to `dataset/rejected/`; `GET /dataset/stats` reports the
-counts. Nothing leaves the machine.
+as a caption to `dataset/liked/<action>/` (the action comes from the caption: running, shooting,
+sword, sneaking and so on, `misc` when there is none), Discard to `dataset/rejected/`;
+`GET /dataset/stats` reports the counts per action. Nothing leaves the machine. Images kept with an
+older version sit flat in `dataset/liked`; the Generate tab offers a button to sort them.
+
+Folders do not teach the model anything by themselves (captions do). They let the trainer draw every
+action equally and let you see which actions are thin. Under 8 images an action is barely learned.
 
 Once you have 20 or more kept images (40-80 is comfortable):
 
@@ -91,7 +96,15 @@ Once you have 20 or more kept images (40-80 is comfortable):
    Without `--steps` it trains about 12 passes over the set (300-1500 steps) and writes checkpoints
    `my-style-s250`, `-s500`, ... next to the final file, so you can compare a lighter version. The
    trigger word (default `ohwx-style`) is saved in `my-style.json` and the app adds it to prompts
-   for you when the LoRA is ticked.
+   for you when the LoRA is ticked. Every action folder is sampled equally (`--balance 0` for
+   natural frequencies); the loss uses min-SNR weighting (`--snr-gamma 0` to turn it off).
+
+4. Compare the checkpoints:
+
+       .\.venv\Scripts\python eval_lora.py --name my-style --weights 0.6,0.8
+
+   writes `loras/my-style-eval.png`, one row per action and one column per checkpoint. Use the
+   column that looks right across most rows.
 
 It trains a LoRA on the UNet attention layers at 512 px with gradient checkpointing (fits a 6 GB
 card) and writes `loras/my-style.safetensors`, which then appears under LoRA styles in the Generate

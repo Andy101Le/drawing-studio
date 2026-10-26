@@ -491,24 +491,38 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         if verdict not in ("liked", "rejected"): raise HTTPException(400, "verdict must be liked or rejected")
         img = body.get("image")
         if not img: raise HTTPException(400, "image required")
-        folder = os.path.abspath(os.path.join(DATA, verdict)); os.makedirs(folder, exist_ok=True)
-        stamp = str(int(time.time() * 1000))
-        _b64_to_image(img).save(os.path.join(folder, stamp + ".png"))
+        from .actions import action_for
         meta = dict(body.get("meta") or {})
         caption = (body.get("caption") or meta.get("prompt") or "").strip()
-        meta["verdict"] = verdict; meta["model"] = (state["engine"].model if state["engine"] else model); meta["at"] = stamp; meta["caption"] = caption
+        # kept images file under dataset/liked/<action>/ so the set can be balanced per action
+        action = action_for(caption) if verdict == "liked" else ""
+        folder = os.path.abspath(os.path.join(DATA, verdict, action)); os.makedirs(folder, exist_ok=True)
+        stamp = str(int(time.time() * 1000))
+        _b64_to_image(img).save(os.path.join(folder, stamp + ".png"))
+        meta["verdict"] = verdict; meta["model"] = (state["engine"].model if state["engine"] else model); meta["at"] = stamp; meta["caption"] = caption; meta["action"] = action
         with open(os.path.join(folder, stamp + ".json"), "w", encoding="utf-8") as f: json.dump(meta, f, indent=1)
         with open(os.path.join(folder, stamp + ".txt"), "w", encoding="utf-8") as f: f.write(caption)
         return dataset_stats()
     @app.get("/dataset/stats")
     def dataset_stats():
         import os
+        from .actions import counts, ACTIONS
         out = {"path": os.path.abspath(DATA)}
         for k in ("liked", "rejected"):
-            d = os.path.join(DATA, k)
-            out[k] = len([f for f in os.listdir(d) if os.path.splitext(f)[1].lower() in (".png", ".jpg", ".jpeg", ".webp")]) if os.path.isdir(d) else 0
+            c = counts(os.path.join(DATA, k)); out[k] = sum(c.values())
+            if k == "liked": out["actions"] = c
         out["readyToTrain"] = out["liked"] >= 20
+        # actions with fewer than 8 images are too thin to learn; the app lists them as what to add next
+        have = out.get("actions", {})
+        out["thin"] = [a for a in ACTIONS if have.get(a, 0) < 8]
+        out["unsorted"] = have.get("unsorted", 0)
         return out
+    @app.post("/dataset/organize")
+    def dataset_organize():
+        """Sort flat kept images into action folders by their captions (one-off after upgrading)."""
+        import os
+        from .actions import organize
+        organize(os.path.join(DATA, "liked")); return dataset_stats()
     @app.get("/dataset/sample")
     def dataset_sample(n: int = 2, size: int = 384):
         """
@@ -516,13 +530,13 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         IP-Adapter. Different images each call, so steered results vary instead of converging.
         """
         import os, random
-        d = os.path.join(DATA, "liked")
-        files = [f for f in os.listdir(d) if os.path.splitext(f)[1].lower() in (".png", ".jpg", ".jpeg", ".webp")] if os.path.isdir(d) else []
+        from .actions import walk_images
+        files = [p for p, _ in walk_images(os.path.join(DATA, "liked"))]
         pick = random.sample(files, min(max(0, int(n)), len(files)))
         out = []
         for f in pick:
             try:
-                im = Image.open(os.path.join(d, f)).convert("RGB"); im.thumbnail((size, size)); out.append(_image_to_b64(im))
+                im = Image.open(f).convert("RGB"); im.thumbnail((size, size)); out.append(_image_to_b64(im))
             except Exception: pass
         return {"images": out, "pool": len(files)}
     @app.get("/loras")

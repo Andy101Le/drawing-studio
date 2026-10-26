@@ -46,7 +46,7 @@ export interface GenRequest {
 export type GenModeAll = GenMode | "inpaint";
 export interface GenProgress { step: number; total: number; preview?: string }
 export interface GenResult { image: string; seed: number; model: string; ms: number; profile?: string; vramPeakGB?: number | null; fast?: boolean; promptTokens?: number; negativeTokens?: number; chunks?: number }
-export interface DatasetStats { path: string; liked: number; rejected: number; readyToTrain: boolean }
+export interface DatasetStats { path: string; liked: number; rejected: number; readyToTrain: boolean; /** kept images per action folder */ actions?: Record<string, number>; /** actions with fewer than 8 images */ thin?: string[]; /** flat images not yet sorted into action folders */ unsorted?: number }
 export interface ProviderHealth { ok: boolean; model?: string; family?: string; device?: string; vramGB?: number; freeVramGB?: number; controlnets?: string[]; profile?: string; maxPx?: number; presets?: string[]; ipAdapter?: boolean; upscaler?: boolean; message?: string }
 export interface Provider {
   readonly id: string; readonly name: string; readonly leavesDevice: boolean;
@@ -66,6 +66,8 @@ export interface Provider {
   upscale?(image: string, scale: number): Promise<{ image: string; width: number; height: number }>;
   rate?(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown): Promise<DatasetStats>;
   datasetStats?(): Promise<DatasetStats>;
+  /** sort flat kept images into action folders by caption */
+  organizeDataset?(): Promise<DatasetStats>;
   /** a few random kept images (small data URLs), different each call */
   sampleKept?(n: number): Promise<{ images: string[]; pool: number }>;
 }
@@ -88,6 +90,7 @@ export class SidecarProvider implements Provider {
   upscale(image: string, scale: number) { return this.json<{ image: string; width: number; height: number }>("/upscale", { method: "POST", body: JSON.stringify({ image, scale }) }); }
   rate(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown) { return this.json<DatasetStats>("/dataset/add", { method: "POST", body: JSON.stringify({ image, verdict, caption, meta }) }); }
   datasetStats() { return this.json<DatasetStats>("/dataset/stats"); }
+  organizeDataset() { return this.json<DatasetStats>("/dataset/organize", { method: "POST", body: "{}" }); }
   sampleKept(n: number) { return this.json<{ images: string[]; pool: number }>(`/dataset/sample?n=${n}`); }
 }
 
