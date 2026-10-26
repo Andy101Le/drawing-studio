@@ -506,11 +506,11 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
     @app.get("/dataset/stats")
     def dataset_stats():
         import os
-        from .actions import counts, ACTIONS
+        from .actions import counts, uncaptioned, ACTIONS
         out = {"path": os.path.abspath(DATA)}
         for k in ("liked", "rejected"):
             c = counts(os.path.join(DATA, k)); out[k] = sum(c.values())
-            if k == "liked": out["actions"] = c
+            if k == "liked": out["actions"] = c; out["uncaptioned"] = uncaptioned(os.path.join(DATA, k))
         out["readyToTrain"] = out["liked"] >= 20
         # actions with fewer than 8 images are too thin to learn; the app lists them as what to add next
         have = out.get("actions", {})
@@ -522,7 +522,7 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         """Sort flat kept images into action folders by their captions (one-off after upgrading)."""
         import os
         from .actions import organize
-        organize(os.path.join(DATA, "liked")); return dataset_stats()
+        r = organize(os.path.join(DATA, "liked")); out = dataset_stats(); out["moved"] = r["moved"]; out["duplicates"] = r["duplicates"]; return out
     @app.get("/dataset/sample")
     def dataset_sample(n: int = 2, size: int = 384):
         """

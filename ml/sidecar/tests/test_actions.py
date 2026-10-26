@@ -16,7 +16,7 @@ def test_organize_moves_files_with_their_captions():
     d = tempfile.mkdtemp(); liked = os.path.join(d, "liked"); os.makedirs(liked)
     caps = ["1boy, running", "1girl, slashing", "portrait", "a street"]
     for i, cap in enumerate(caps):
-        Image.new("RGB", (8, 8)).save(os.path.join(liked, f"{i}.png"))
+        Image.new("RGB", (8, 8), (i * 40, 0, 0)).save(os.path.join(liked, f"{i}.png"))  # distinct pixels: identical files would count as duplicates
         with open(os.path.join(liked, f"{i}.json"), "w") as f: json.dump({"caption": cap}, f)
         with open(os.path.join(liked, f"{i}.txt"), "w") as f: f.write(cap)
     r = organize(liked)
@@ -26,3 +26,14 @@ def test_organize_moves_files_with_their_captions():
     assert os.path.isfile(os.path.join(liked, "running", "0.txt"))
     # a second pass has nothing left to move
     assert organize(liked)["moved"] == 0
+
+def test_organize_moves_byte_identical_copies_aside():
+    d = tempfile.mkdtemp(); liked = os.path.join(d, "liked"); os.makedirs(liked)
+    for i in range(3):
+        Image.new("RGB", (8, 8), (10, 20, 30)).save(os.path.join(liked, f"{i}.png"))
+        with open(os.path.join(liked, f"{i}.txt"), "w") as f: f.write("1boy, running")
+    Image.new("RGB", (8, 8), (200, 0, 0)).save(os.path.join(liked, "other.png"))
+    r = organize(liked)
+    assert r["duplicates"] == 2 and r["moved"] == 2
+    assert counts(liked) == {"misc": 1, "running": 1}
+    assert len(os.listdir(os.path.join(d, "duplicates"))) == 4

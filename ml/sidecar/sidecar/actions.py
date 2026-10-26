@@ -79,9 +79,36 @@ def caption_of(image_path: str) -> str:
         with open(base + ".txt", encoding="utf-8") as f: return f.read().strip()
     except Exception: return ""
 
+def _digest(path: str) -> str:
+    import hashlib
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""): h.update(chunk)
+    return h.hexdigest()
+
+def dedupe(root: str) -> int:
+    """
+    Keep pressed twice on the same result writes the same picture twice; the trainer would then
+    see it twice as often. Byte-identical copies (and their .json/.txt) move to <root>/../duplicates.
+    Returns how many moved.
+    """
+    seen: dict = {}; moved = 0
+    dup_dir = os.path.join(os.path.dirname(os.path.abspath(root)), "duplicates")
+    for path, _ in list(walk_images(root)):
+        d = _digest(path)
+        if d not in seen: seen[d] = path; continue
+        os.makedirs(dup_dir, exist_ok=True)
+        base = os.path.splitext(path)[0]
+        for ext in (os.path.splitext(path)[1], ".json", ".txt"):
+            src = base + ext
+            if os.path.isfile(src): os.replace(src, os.path.join(dup_dir, os.path.basename(src)))
+        moved += 1
+    return moved
+
 def organize(root: str) -> dict:
-    """Move flat images (and their .json/.txt) into action folders. Returns counts per folder."""
+    """Move flat images (and their .json/.txt) into action folders, after dropping byte-identical copies. Returns counts per folder."""
     moved = 0
+    duplicates = dedupe(root)
     for path, action in list(walk_images(root)):
         if action: continue
         target = action_for(caption_of(path))
@@ -91,7 +118,7 @@ def organize(root: str) -> dict:
             src = base + ext
             if os.path.isfile(src): os.replace(src, os.path.join(d, os.path.basename(src)))
         moved += 1
-    return {"moved": moved, **counts(root)}
+    return {"moved": moved, "duplicates": duplicates, **counts(root)}
 
 def counts(root: str) -> dict:
     """Images per action folder (flat images count under 'unsorted')."""
@@ -100,3 +127,7 @@ def counts(root: str) -> dict:
         key = action or "unsorted"
         out[key] = out.get(key, 0) + 1
     return out
+
+def uncaptioned(root: str) -> int:
+    """Images with no caption at all: they train on the trigger word only and cannot be sorted by action."""
+    return sum(1 for p, _ in walk_images(root) if not caption_of(p))
