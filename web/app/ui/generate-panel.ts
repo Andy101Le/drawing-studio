@@ -5,7 +5,8 @@
  * new layers with their parameters recorded, so any result can be reproduced or re-seeded.
  */
 import { setRedrawSource } from "./redraw-panel.js";
-import { TAG_GROUPS, PANEL_RECIPES, MANGA_LOOK_TAGS, MANGA_LOOK_NEGATIVE } from "./manga-tags.js";
+import { TAG_GROUPS, PANEL_RECIPES, MANGA_LOOK_TAGS, MANGA_LOOK_NEGATIVE, ANATOMY_NEGATIVE, ANATOMY_POSITIVE } from "./manga-tags.js";
+import { POSE_PRESETS, drawPose, fitPose, hitJoint, mirrorPose, moveJoint, poseToPng, type Pose } from "../engine/pose.js";
 import { DESIGN_DEFAULTS, designPrompt, renderDesign, renderStyleTags, type Design } from "./character-design.js";
 import { FINISH_DEFAULTS, type FinishOptions, type MangaFinish } from "../engine/manga-finish.js";
 import { JobRunner, MockProvider, SidecarProvider, canvasToPng, imageHash, hashDistance, type DatasetStats, layersToPng, pngToLayer, selectionToMaskPng, type GenMode, type GenRequest, type Provider, type ProviderHealth, type Region } from "../engine/ml.js";
@@ -13,8 +14,8 @@ import { clear, field, h, slider } from "./dom.js";
 import type { AppState } from "./state.js";
 
 const KEY = "omni.ml";
-interface Saved { provider: string; base: string; prompt: string; negative: string; mode: GenMode; width: number; height: number; steps: number; guidance: number; seed: number; strength: number; controlWeight: number; remoteOk: boolean; qualityTags: boolean; scheduler: GenRequest["scheduler"]; cfgRescale: number; hiresFix: boolean; hiresStrength: number; controlPreprocess: GenRequest["controlPreprocess"]; referenceScale: number; loras: Array<{ name: string; weight: number }>; tags: string[]; useDepth: boolean; depthWeight: number; fast: boolean; freeu: boolean; refAlways: boolean; mangaLook: boolean; finish: MangaFinish; lpi: number; panelId: number; openGroups: string[]; seedMode: "new" | "fixed"; steerKept: boolean; steerWeight: number; dedupe: boolean; design: Design }
-const DEF: Saved = { provider: "sidecar", base: "http://127.0.0.1:8790", prompt: "anime illustration, clean lineart, flat cel shading, soft light", negative: "lowres, blurry, extra fingers, watermark, text", mode: "lines", width: 512, height: 768, steps: 25, guidance: 6, seed: 1, strength: 0.6, controlWeight: 0.9, remoteOk: false, qualityTags: true, scheduler: "dpmpp_2m_karras", cfgRescale: 0, hiresFix: false, hiresStrength: 0.35, controlPreprocess: "none", referenceScale: 0.6, loras: [], tags: [], useDepth: false, depthWeight: 0.6, fast: false, freeu: true, refAlways: false, mangaLook: false, finish: "none", lpi: 60, panelId: -1, openGroups: ["Cast", "Shot", "Camera"], seedMode: "new", steerKept: true, steerWeight: 0.3, dedupe: true, design: { ...DESIGN_DEFAULTS } };
+interface Saved { provider: string; base: string; prompt: string; negative: string; mode: GenMode; width: number; height: number; steps: number; guidance: number; seed: number; strength: number; controlWeight: number; remoteOk: boolean; qualityTags: boolean; scheduler: GenRequest["scheduler"]; cfgRescale: number; hiresFix: boolean; hiresStrength: number; controlPreprocess: GenRequest["controlPreprocess"]; referenceScale: number; loras: Array<{ name: string; weight: number }>; tags: string[]; useDepth: boolean; depthWeight: number; fast: boolean; freeu: boolean; refAlways: boolean; mangaLook: boolean; finish: MangaFinish; lpi: number; panelId: number; openGroups: string[]; seedMode: "new" | "fixed"; steerKept: boolean; steerWeight: number; dedupe: boolean; design: Design; anatomy: boolean; detailFaces: boolean; detailEyes: boolean; detailHands: boolean; detailStrength: number; negEmbeddings: boolean; usePose: boolean; poseWeight: number; pose: Pose | null }
+const DEF: Saved = { provider: "sidecar", base: "http://127.0.0.1:8790", prompt: "anime illustration, clean lineart, flat cel shading, soft light", negative: "lowres, blurry, extra fingers, watermark, text", mode: "lines", width: 512, height: 768, steps: 25, guidance: 6, seed: 1, strength: 0.6, controlWeight: 0.9, remoteOk: false, qualityTags: true, scheduler: "dpmpp_2m_karras", cfgRescale: 0, hiresFix: false, hiresStrength: 0.35, controlPreprocess: "none", referenceScale: 0.6, loras: [], tags: [], useDepth: false, depthWeight: 0.6, fast: false, freeu: true, refAlways: false, mangaLook: false, finish: "none", lpi: 60, panelId: -1, openGroups: ["Cast", "Shot", "Camera"], seedMode: "new", steerKept: true, steerWeight: 0.3, dedupe: true, design: { ...DESIGN_DEFAULTS }, anatomy: true, detailFaces: true, detailEyes: true, detailHands: true, detailStrength: 0.42, negEmbeddings: true, usePose: false, poseWeight: 0.8, pose: null };
 function load(): Saved { try { const v = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Saved>; return { ...DEF, ...v, design: { ...DESIGN_DEFAULTS, ...(v.design ?? {}) } }; } catch { return { ...DEF, design: { ...DESIGN_DEFAULTS } }; } }
 
 export function generatePanel(app: AppState): HTMLElement {
@@ -61,15 +62,18 @@ export function generatePanel(app: AppState): HTMLElement {
     const triggers = st.loras.map((l) => loraTriggers[l.name]).filter((t): t is string => !!t && !st.prompt.includes(t) && !st.tags.includes(t));
     const style = [...(st.mangaLook ? MANGA_LOOK_TAGS : []), ...renderStyleTags(st.design)];
     const styleSet = new Set(style);
-    const parts = [...triggers, ...d.positive, st.prompt.trim(), ...st.tags.filter((t) => !styleSet.has(t)), ...style];
+    const parts = [...triggers, ...d.positive, st.prompt.trim(), ...st.tags.filter((t) => !styleSet.has(t)), ...style, ...(st.anatomy ? ANATOMY_POSITIVE : [])];
     const prompt = [...new Set(parts.filter(Boolean))].join(", ");
-    const negative = [...new Set([st.negative.trim(), ...(st.mangaLook ? [MANGA_LOOK_NEGATIVE] : []), ...d.negative].filter(Boolean))].join(", ");
+    const negative = [...new Set([st.negative.trim(), ...(st.mangaLook ? [MANGA_LOOK_NEGATIVE] : []), ...d.negative, ...(st.anatomy ? [ANATOMY_NEGATIVE] : [])].filter(Boolean))].join(", ");
     return { prompt, negative };
   };
   const buildRequest = (): GenRequest => {
     const region = panelRegion(); const [gw, gh] = region ? panelSize(region) : [st.width, st.height];
     const req: GenRequest = { mode: st.mode, prompt: st.prompt, negative: st.negative, width: gw, height: gh, steps: st.steps, guidance: st.guidance, seed: st.seed, strength: st.strength, controlWeight: st.controlWeight, qualityTags: st.qualityTags, scheduler: st.scheduler, cfgRescale: st.cfgRescale, hiresFix: st.hiresFix, hiresStrength: st.hiresStrength, controlPreprocess: st.controlPreprocess, referenceScale: st.referenceScale, loras: st.loras, controls: [], freeu: st.freeu, fast: st.fast };
     if (region) req.region = region;
+    req.negEmbeddings = st.negEmbeddings;
+    if (st.detailFaces || st.detailEyes || st.detailHands) req.detail = { faces: st.detailFaces, eyes: st.detailEyes, hands: st.detailHands, strength: st.detailStrength, steps: 22 };
+    if (st.usePose && st.pose) req.controls.push({ type: "pose", image: poseToPng(st.pose, gw, gh), weight: st.poseWeight });
     if (st.useDepth && app.nprDepth) { const d = app.nprDepth(); if (d) req.controls.push({ type: "depth", image: canvasToPng(d, app.doc, gw, gh, region), weight: st.depthWeight }); }
     if (st.refAlways && reference && st.mode !== "reference") req.reference = reference;
     if (references.length && (st.mode === "reference" || st.refAlways)) req.references = references;
@@ -199,6 +203,21 @@ export function generatePanel(app: AppState): HTMLElement {
     app.invalidate(); app.emit("layers"); app.emit("layers-refresh");
   };
 
+  /** width / height of what will be generated, so the pose frame has the same shape */
+  const poseAspect = () => { const r = panelRegion(); if (r) { const [w, hh] = panelSize(r); return w / hh; } return st.width / st.height; };
+  let poseDrag: { i: number; carry: boolean } | null = null;
+  const poseEditor = (): HTMLElement => {
+    const a = poseAspect(); const W = 240, H = Math.round(W / a);
+    const c = h("canvas", { width: String(W), height: String(H), style: { width: `${W}px`, height: `${H}px`, border: "1px solid #444", borderRadius: "3px", cursor: "crosshair", touchAction: "none" }, title: "Pose editor", "data-help": "Drag a joint. Shift-drag moves the whole limb below it. Double-click a joint to hide it (an arm behind the body, legs out of frame)." }) as HTMLCanvasElement;
+    const paint = () => { const g = c.getContext("2d")!; drawPose(g, st.pose!, W, H, 1.6); if (poseDrag) { const q = st.pose!.pts[poseDrag.i]!; g.strokeStyle = "#fff"; g.lineWidth = 1.5; g.beginPath(); g.arc(q.x * W, q.y * H, 9, 0, Math.PI * 2); g.stroke(); } };
+    const at = (e: PointerEvent) => { const r = c.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
+    c.addEventListener("pointerdown", (e) => { const p = at(e); const i = hitJoint(st.pose!, p.x, p.y, 14 / W); if (i < 0) return; poseDrag = { i, carry: e.shiftKey }; c.setPointerCapture(e.pointerId); paint(); });
+    c.addEventListener("pointermove", (e) => { if (!poseDrag) return; const p = at(e); st.pose = moveJoint(st.pose!, poseDrag.i, p.x, p.y, poseDrag.carry); paint(); });
+    c.addEventListener("pointerup", () => { if (poseDrag) { poseDrag = null; save(); paint(); } });
+    c.addEventListener("dblclick", (e) => { const r = c.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height; const i = hitJoint(st.pose!, x, y, 14 / W); if (i >= 0) { st.pose!.off[i] = !st.pose!.off[i]; save(); paint(); } });
+    paint();
+    return h("div", { class: "row", style: { gap: "8px", alignItems: "flex-start" } }, c, h("span", { class: "dim", style: { fontSize: "11px", maxWidth: "120px" } }, "Drag joints. Shift-drag moves the limb. Double-click hides a joint. The figure's right side is on your left when it faces you."));
+  };
   const tokenMeter = (): HTMLElement => {
     const c = composePrompt();
     const est = (t: string) => Math.round(t.split(/[\s,]+/).filter(Boolean).length * 1.3);
@@ -259,6 +278,23 @@ export function generatePanel(app: AppState): HTMLElement {
           st.finish === "tone" ? field("Tone lpi", slider(40, 100, 5, st.lpi, (v) => { st.lpi = v; save(); }), () => `${st.lpi} lpi`) : null);
       })(),
       h("div", { class: "sep" }), ...renderDesign(st.design, field, slider, () => { save(); render(); }),
+      h("div", { class: "sep" }), h("h3", {}, "Pose and anatomy"),
+      h("p", { class: "dim", style: { fontSize: "11px", margin: "2px 0" } }, "Three things that decide whether hands, limbs and eyes come out right: a pose skeleton that pins the body, a detail pass that redraws faces, eyes and hands at full size, and the usual failure names in the negative prompt."),
+      field("Pose skeleton", h("div", { class: "row", style: { gap: "6px", alignItems: "center", flexWrap: "wrap" } },
+        h("input", { type: "checkbox", checked: st.usePose, title: "Send pose", "data-help": "Send the stick figure below as an OpenPose ControlNet: the body lands where the joints are, with that many arms and legs. Drag joints; Shift-drag carries the limb; double-click hides a joint (behind the body or out of frame).", onChange: (e: Event) => { st.usePose = (e.target as HTMLInputElement).checked; if (st.usePose && !st.pose) st.pose = fitPose(POSE_PRESETS.standing!(), poseAspect()); save(); render(); } }),
+        h("select", { title: "Pose preset", "data-help": "Start from a ready pose, then drag the joints.", onChange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; if (POSE_PRESETS[v]) { st.pose = fitPose(POSE_PRESETS[v]!(), poseAspect()); st.usePose = true; save(); render(); } } },
+          h("option", { value: "" }, "preset…"), ...Object.keys(POSE_PRESETS).map((k) => h("option", { value: k }, k))),
+        st.pose ? h("button", { title: "Mirror pose", onClick: () => { st.pose = mirrorPose(st.pose!); save(); render(); } }, "Mirror") : null,
+        st.pose ? h("button", { title: "Clear pose", onClick: () => { st.pose = null; st.usePose = false; save(); render(); } }, "Clear") : null)),
+      st.usePose && st.pose ? poseEditor() : null,
+      st.usePose ? field("Pose weight", slider(0.3, 1.2, 0.05, st.poseWeight, (v) => { st.poseWeight = v; save(); }), () => st.poseWeight.toFixed(2)) : null,
+      field("Detail pass", h("div", { class: "row", style: { gap: "8px", alignItems: "center", flexWrap: "wrap" } },
+        ...([["detailFaces", "faces"], ["detailEyes", "eyes"], ["detailHands", "hands"]] as const).map(([k, l]) => h("label", { class: "row", style: { gap: "3px", alignItems: "center" }, title: `Redo ${l}`, "data-help": `After the image is done, find each ${l === "eyes" ? "eye strip" : l.slice(0, -1)} with the pose detector, cut it out, redraw it at 512 px with a prompt that names it (five fingers, symmetrical eyes) and blend it back with a soft edge. The usual fix for merged fingers and mismatched eyes. Adds a few seconds per region; skipped in Fast preview.` }, h("input", { type: "checkbox", checked: st[k], onChange: (e: Event) => { st[k] = (e.target as HTMLInputElement).checked; save(); } }), l)))),
+      st.detailFaces || st.detailEyes || st.detailHands ? field("Detail strength", slider(0.25, 0.65, 0.01, st.detailStrength, (v) => { st.detailStrength = v; save(); }), () => st.detailStrength.toFixed(2)) : null,
+      field("Anatomy guard", h("input", { type: "checkbox", checked: st.anatomy, title: "Anatomy guard", "data-help": `Adds "${ANATOMY_POSITIVE.join(", ")}" to the prompt and the usual failures (extra fingers, fused fingers, extra limbs, asymmetrical eyes...) to the negative.`, onChange: (e: Event) => { st.anatomy = (e.target as HTMLInputElement).checked; save(); render(); } })),
+      field("Neg. embeddings", h("div", { class: "row", style: { gap: "6px", alignItems: "center", flexWrap: "wrap" } },
+        h("input", { type: "checkbox", checked: st.negEmbeddings, title: "Use negative embeddings", "data-help": "Textual-inversion files in ml/sidecar/embeddings (bad-hands-5, EasyNegative and the like, downloaded by you) are appended to the negative prompt by their file name. Trained specifically on broken hands; a few hundred KB each.", onChange: (e: Event) => { st.negEmbeddings = (e.target as HTMLInputElement).checked; save(); } }),
+        h("span", { class: "dim", style: { fontSize: "11px" } }, health?.embeddings?.length ? `loaded: ${health.embeddings.join(", ")}` : "none loaded: drop .safetensors/.pt files into ml/sidecar/embeddings and restart the sidecar"))),
       h("div", { class: "sep" }), h("h3", {}, "Scene recipes"),
       h("p", { class: "dim", style: { fontSize: "11px", margin: "2px 0" } }, "One click sets the action, camera and effect tags for a kind of panel. Cast, look and emotion tags you picked stay."),
       h("div", { class: "row", style: { flexWrap: "wrap", gap: "3px", marginBottom: "4px" } }, ...PANEL_RECIPES.map((r) => h("button", { class: "tag", title: r.name, "data-help": `${r.hint} Tags: ${r.tags.join(", ")}.`, onClick: () => {
@@ -341,6 +377,7 @@ export function generatePanel(app: AppState): HTMLElement {
         h("div", { class: "row", style: { gap: "4px", alignItems: "center", fontSize: "11px", marginTop: "4px", flexWrap: "wrap" } },
           h("span", { class: "mono dim" }, `${j.status}${j.progress && !j.result ? ` ${j.progress.step}/${j.progress.total}` : ""} · seed ${j.req.seed} · ${j.req.mode}${j.result ? ` · ${(j.result.ms / 1000).toFixed(1)} s · ${j.result.model}${j.result.vramPeakGB ? ` · peak ${j.result.vramPeakGB} GB` : ""}${j.result.promptTokens ? ` · ${j.result.promptTokens} tokens` : ""}` : ""}`),
           j.result?.fast ? h("span", { class: "chip warn", title: "Made with Fast preview (LCM, 8 steps)" }, "preview") : null,
+          j.result?.detail ? h("span", { class: "chip", title: j.result.detail.error ?? j.result.detail.regions.map((r) => `${r.kind} ${r.box.join(",")}`).join("; ") }, j.result.detail.error ? "detail pass failed" : j.result.detail.regions.length ? `detail: ${["face", "eyes", "hand"].map((k) => { const n = j.result!.detail!.regions.filter((r) => r.kind === k).length; return n ? `${n} ${k}${n > 1 && k !== "eyes" ? "s" : ""}` : ""; }).filter(Boolean).join(", ")}` : "detail: nothing found") : null,
           j.result?.fast ? h("button", { title: "Full quality", "data-help": "Run this same seed and settings again with Fast preview off: full steps, your guidance and LoRA weights.", onClick: () => { void runner.run({ ...j.req, fast: false, steps: Math.max(j.req.steps, 28), retry: 1 } as GenRequest); } }, "Full quality") : null,
           h("span", { class: "grow" }),
           j.result ? h("button", { title: "Add as layer", "data-help": "Put this result on a new layer above the active one; the layer remembers prompt, seed and settings.", onClick: () => void addAsLayer(j.result!.image, `Gen ${j.req.seed}`, j.req, j.result!.seed, j.result!.model) }, "Add as layer") : null,

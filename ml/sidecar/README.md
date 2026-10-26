@@ -64,6 +64,12 @@ printing which one loaded. To check before downloading:
 It prints OK (usable with `--model <id>`), SINGLE-FILE (use the printed `--model https://.../file.safetensors`),
 or MISSING. Any Hugging Face id or local `.safetensors` path works as `--model`.
 
+## Hands, faces and poses
+
+- `embeddings/`: negative textual inversions (see the README there). Loaded at start; listed by `/health`.
+- Detail pass: `GenRequest.detail = {"faces","eyes","hands","strength","steps"}` redraws those regions at 512 px after the image, found with controlnet_aux OpenPose (downloaded on first use from `lllyasviel/Annotators`).
+- Pose: a `controls` entry of type `pose` with an OpenPose-coloured skeleton image drives the openpose ControlNet (about 1.4 GB, downloaded on first use).
+
 ## Extras (loaded on first use)
 
 - `POST /tag {image}`: WD14 tagger (`SmilingWolf/wd-v1-4-moat-tagger-v2`, ONNX) returns Danbooru tags with probabilities for a drawing; the app uses it to seed the prompt.

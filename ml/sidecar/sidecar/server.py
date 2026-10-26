@@ -34,6 +34,8 @@ class GenRequest(BaseModel):
     controls: list = []                      # extra ControlNets: [{"type": "depth", "image": dataURL, "weight": 0.6}]
     freeu: bool = True                       # FreeU backbone/skip scaling: free sharpness and contrast, no extra memory
     fast: bool = False                       # LCM-LoRA preview: 6 steps, guidance 1.5, seconds instead of a minute
+    detail: Optional[dict] = None            # {"faces","eyes","hands": bool, "strength", "steps"}: redo those regions at full resolution after the image (detail.py)
+    negEmbeddings: bool = True               # append the trigger words of embeddings/*.safetensors|.pt (bad-hands and the like) to the negative
 
 def _b64_to_image(data_url: str) -> Image.Image:
     raw = base64.b64decode(data_url.split(",", 1)[1] if "," in data_url else data_url)
@@ -112,7 +114,7 @@ class Engine:
         # running on the card and spilling into shared memory (which is ~20x slower).
         self.controlnets = ["lineart"] if controlnet == "lineart" else []
         self.ctl = None; self.cn_id = cn_id; self.want_lineart = controlnet == "lineart"
-        self.cn_lineart = None; self.cn_depth = None; self.CTL = CTL; self.ControlNetModel = ControlNetModel; self.dtype = dtype; self.cn_kw = cn_kw
+        self.cn_lineart = None; self._extra_nets = {}; self.CTL = CTL; self.ControlNetModel = ControlNetModel; self.dtype = dtype; self.cn_kw = cn_kw
         # IP-Adapter is NOT loaded here. With the adapter resident, diffusers passes
         # added_cond_kwargs=None for any job without a reference image and the UNet then does
         # ("image_embeds" not in None) -> TypeError. It is loaded on demand instead (and it also
@@ -127,6 +129,9 @@ class Engine:
             else: p.to(self.device)
         self.base_sched_config = self.txt.scheduler.config
         self.detectors = {}
+        self.embeddings = []
+        try: self.load_embeddings(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "embeddings"))
+        except Exception as e: print(f"[sidecar] embeddings: {e}", flush=True)
     def lineart_pipe(self):
         """Build the lineart ControlNet pipeline on first use and keep it after that."""
         if self.ctl is None and self.want_lineart:
@@ -145,12 +150,19 @@ class Engine:
             try:
                 import gc; gc.collect(); self.torch.cuda.empty_cache()
             except Exception: pass
-    def depth_pipe(self, with_lineart: bool):
-        """ControlNet pipeline with [lineart, depth] or [depth]; the depth net loads on first use."""
-        if self.cn_depth is None:
-            did = self.preset["depth"] if self.preset else ("diffusers/controlnet-depth-sdxl-1.0" if self.family == "sdxl" else "lllyasviel/control_v11f1p_sd15_depth")
-            self.cn_depth = self.ControlNetModel.from_pretrained(did, torch_dtype=self.dtype, **(self.cn_kw if self.family == "sdxl" else {}))
-        nets = ([self.cn_lineart] if with_lineart and self.cn_lineart is not None else []) + [self.cn_depth]
+    def extra_net(self, kind: str):
+        """A depth or pose ControlNet, loaded on first use and kept. [A: hub ids as published]"""
+        cache = getattr(self, "_extra_nets", None)
+        if cache is None: cache = self._extra_nets = {}
+        if kind not in cache:
+            if kind == "depth": cid = self.preset["depth"] if self.preset else ("diffusers/controlnet-depth-sdxl-1.0" if self.family == "sdxl" else "lllyasviel/control_v11f1p_sd15_depth")
+            elif kind == "pose": cid = (self.preset or {}).get("pose") or ("thibaud/controlnet-openpose-sdxl-1.0" if self.family == "sdxl" else "lllyasviel/control_v11p_sd15_openpose")
+            else: raise ValueError(f"unknown control {kind}")
+            cache[kind] = self.ControlNetModel.from_pretrained(cid, torch_dtype=self.dtype, **(self.cn_kw if self.family == "sdxl" else {}))
+        return cache[kind]
+    def depth_pipe(self, with_lineart: bool, kinds=("depth",)):
+        """ControlNet pipeline with [lineart?, depth?, pose?] in that order; the extra nets load on first use."""
+        nets = ([self.cn_lineart] if with_lineart and self.cn_lineart is not None else []) + [self.extra_net(k) for k in kinds]
         p = self.CTL(**self.txt.components, controlnet=nets if len(nets) > 1 else nets[0])
         p.vae.enable_tiling(); p.vae.enable_slicing()
         if self.profile["offload"]: p.enable_model_cpu_offload()
@@ -251,6 +263,30 @@ class Engine:
                 if names: p.set_adapters(names, adapter_weights=weights)
                 else: p.disable_lora()
             except Exception: pass
+    def pose_detector(self):
+        """controlnet_aux OpenPose (body + hands), used by the detail pass to find faces and hands. Loaded on first use."""
+        if "openpose" not in self.detectors:
+            from controlnet_aux import OpenposeDetector
+            self.detectors["openpose"] = OpenposeDetector.from_pretrained("lllyasviel/Annotators")
+        return self.detectors["openpose"]
+    def load_embeddings(self, folder: str = "embeddings"):
+        """
+        Textual-inversion embeddings dropped into ml/sidecar/embeddings (bad-hands-5, EasyNegative and
+        the like). Each file's stem becomes its trigger token; the token list is what the app appends
+        to the negative prompt. Loaded once; the text encoder is shared by every pipeline.
+        """
+        import os
+        self.embeddings = []
+        if not os.path.isdir(folder): return self.embeddings
+        for f in sorted(os.listdir(folder)):
+            stem, ext = os.path.splitext(f)
+            if ext.lower() not in (".pt", ".safetensors", ".bin"): continue
+            try:
+                self.txt.load_textual_inversion(os.path.join(folder, f), token=stem)
+                self.embeddings.append(stem); print(f"[sidecar] embedding {stem}", flush=True)
+            except Exception as e:
+                print(f"[sidecar] embedding {f} skipped: {type(e).__name__}: {str(e)[:120]}", flush=True)
+        return self.embeddings
     def preprocess(self, kind: str, img):
         """controlnet-aux detectors for rough sketches; the app's own ink is clean and skips this."""
         if kind == "none": return img
@@ -272,6 +308,9 @@ class Engine:
         if px > cap:
             k = (cap / px) ** 0.5; req.width = max(64, int(req.width * k) // 64 * 64); req.height = max(64, int(req.height * k) // 64 * 64)
         prompt = req.prompt; neg = req.negative
+        if req.negEmbeddings and getattr(self, "embeddings", None):
+            toks = [t for t in self.embeddings if t not in (neg or "")]
+            if toks: neg = f"{', '.join(toks)}, {neg}" if neg else ", ".join(toks)
         if self.preset and req.qualityTags:
             prompt = f"{self.preset['quality']}, {prompt}" if prompt else self.preset["quality"]
             neg = f"{self.preset['neg']}, {neg}" if neg else self.preset["neg"]
@@ -301,7 +340,7 @@ class Engine:
         except Exception as e:
             print(f"[sidecar] long-prompt encoding failed ({type(e).__name__}: {e}); using plain strings", flush=True)
             common["prompt"] = prompt; common["negative_prompt"] = neg
-        extra = [c for c in (req.controls or []) if c.get("type") == "depth" and c.get("image")]
+        extra = [c for c in (req.controls or []) if c.get("type") in ("depth", "pose") and c.get("image")]
         refs = [r for r in ([req.reference] if req.reference else []) + list(req.references or [])[:4] if r]
         self.ensure_ip(bool(refs))
         if refs and self.ip_loaded:
@@ -333,11 +372,15 @@ class Engine:
                     # the app sends black lines on white; ControlNet lineart expects white lines on black
                     from PIL import ImageOps; ctl = ImageOps.invert(ctl)
             if extra:
-                dep = _b64_to_image(extra[0]["image"]).resize((req.width, req.height)); dw = float(extra[0].get("weight", 0.6))
-                pipe = self.depth_pipe(with_lineart=ctl is not None)
+                # depth from the 3D layer and/or a pose skeleton from the Pose editor, each with its own weight
+                kinds = []; imgs = []; ws = []
+                for c in extra:
+                    if c["type"] in kinds: continue
+                    kinds.append(c["type"]); imgs.append(_b64_to_image(c["image"]).resize((req.width, req.height))); ws.append(float(c.get("weight", 0.6)))
+                pipe = self.depth_pipe(with_lineart=ctl is not None, kinds=tuple(kinds))
                 pipe.scheduler = self.txt.scheduler
-                images = [ctl, dep] if ctl is not None else dep; scales = [float(req.controlWeight), dw] if ctl is not None else dw
-                out = pipe(image=images, controlnet_conditioning_scale=scales, width=req.width, height=req.height, **common, **kw)
+                images = ([ctl] if ctl is not None else []) + imgs; scales = ([float(req.controlWeight)] if ctl is not None else []) + ws
+                out = pipe(image=images if len(images) > 1 else images[0], controlnet_conditioning_scale=scales if len(scales) > 1 else scales[0], width=req.width, height=req.height, **common, **kw)
             else:
                 out = self.ctl(image=ctl, controlnet_conditioning_scale=float(req.controlWeight), width=req.width, height=req.height, **common, **kw)
         elif req.mode == "inpaint" and req.init and req.mask:
@@ -360,6 +403,17 @@ class Engine:
                     if cancelled.is_set(): raise InterruptedError("cancelled")
                     progress(req.steps + step + 1, req.steps + common2["num_inference_steps"], None); return kw_
                 img = self.img2img(image=up, strength=float(req.hiresStrength), callback_on_step_end=cb2, callback_on_step_end_tensor_inputs=["latents"], **common2).images[0]
+        self.last_detail = None
+        d = req.detail or {}
+        if d and (d.get("faces") or d.get("eyes") or d.get("hands")) and not req.fast:
+            from .detail import run_detail
+            # the patch prompt carries the model's quality words and any LoRA trigger, so it matches the picture's look
+            style = [self.preset["quality"]] if (self.preset and req.qualityTags) else []
+            for item in (req.loras or []):
+                t = self.lora_triggers().get(item.get("name", "")); 
+                if t: style.append(t)
+            if cancelled.is_set(): raise InterruptedError("cancelled")
+            img, self.last_detail = run_detail(self, img, d, ", ".join(style), req.negative, common, progress=lambda i, n: progress(req.steps, req.steps, None))
         return img
 
 def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, profile: str = "6gb") -> FastAPI:
@@ -384,7 +438,7 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
             def prog(step, total, preview): j["progress"] = {"step": step, "total": total, **({"preview": preview} if preview else {})}
             try:
                 img = eng.run(GenRequest(**j["req"]), prog, j["cancel"])
-                j["result"] = {"image": _image_to_b64(img), "seed": j["req"]["seed"], "model": eng.model, "ms": int((time.time() - t0) * 1000), "profile": profile, "vramPeakGB": (round(eng.torch.cuda.max_memory_allocated() / 2**30, 2) if eng.device == "cuda" else None), "fast": bool(j["req"].get("fast")), **(getattr(eng, "last_prompt_info", None) or {})}; j["status"] = "done"
+                j["result"] = {"image": _image_to_b64(img), "seed": j["req"]["seed"], "model": eng.model, "ms": int((time.time() - t0) * 1000), "profile": profile, "vramPeakGB": (round(eng.torch.cuda.max_memory_allocated() / 2**30, 2) if eng.device == "cuda" else None), "fast": bool(j["req"].get("fast")), "detail": getattr(eng, "last_detail", None), **(getattr(eng, "last_prompt_info", None) or {})}; j["status"] = "done"
             except InterruptedError: j["status"] = "cancelled"
             except Exception as e:
                 import traceback; traceback.print_exc()
@@ -399,7 +453,7 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         if state["error"]: raise HTTPException(503, state["error"])
         if eng is None: return {"model": model, "device": "loading", "controlnets": []}
         import os
-        return {"model": model, "family": eng.family, "device": eng.device, "vramGB": eng.vram_gb(), "freeVramGB": eng.free_vram_gb(), "controlnets": eng.controlnets, "profile": profile, "maxPx": eng.profile["max_px"], "presets": list(PRESETS), "ipAdapter": bool(eng.ip), "ipLoaded": bool(getattr(eng, "ip_loaded", False)), "upscaler": os.path.isfile(os.path.join("weights", "RealESRGAN_x4plus_anime_6B.pth"))}
+        return {"model": model, "family": eng.family, "device": eng.device, "vramGB": eng.vram_gb(), "freeVramGB": eng.free_vram_gb(), "controlnets": eng.controlnets, "profile": profile, "maxPx": eng.profile["max_px"], "presets": list(PRESETS), "ipAdapter": bool(eng.ip), "ipLoaded": bool(getattr(eng, "ip_loaded", False)), "embeddings": list(getattr(eng, "embeddings", []) or []), "upscaler": os.path.isfile(os.path.join("weights", "RealESRGAN_x4plus_anime_6B.pth"))}
     @app.get("/models")
     def models():
         eng = state["engine"]

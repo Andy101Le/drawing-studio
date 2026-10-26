@@ -22,7 +22,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header("content-type", "application/json"); self.send_header("access-control-allow-origin", "*"); self.send_header("access-control-allow-headers", "content-type"); self.send_header("access-control-allow-methods", "GET,POST,OPTIONS"); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
     def do_OPTIONS(self): self._send(200, {})
     def do_GET(self):
-        if self.path == "/health": return self._send(200, {"model": "stub-placeholder", "family": "sdxl", "device": "cpu", "vramGB": 6, "freeVramGB": 5.2, "controlnets": ["lineart"], "profile": "6gb", "maxPx": 832 * 1216, "presets": ["animagine-xl-4", "illustrious-xl", "dreamshaper-8-sd15", "realistic-vision-sd15", "counterfeit-v3-sd15"]})
+        if self.path == "/health": return self._send(200, {"model": "stub-placeholder", "family": "sdxl", "device": "cpu", "vramGB": 6, "freeVramGB": 5.2, "controlnets": ["lineart"], "profile": "6gb", "maxPx": 832 * 1216, "presets": ["animagine-xl-4", "illustrious-xl", "dreamshaper-8-sd15", "realistic-vision-sd15", "counterfeit-v3-sd15"], "embeddings": ["bad-hands-5"]})
         if self.path == "/models": return self._send(200, {"presets": [{"name": "animagine-xl-4", "family": "sdxl"}, {"name": "illustrious-xl", "family": "sdxl"}, {"name": "dreamshaper-8-sd15", "family": "sd15"}, {"name": "realistic-vision-sd15", "family": "sd15"}, {"name": "counterfeit-v3-sd15", "family": "sd15"}], "current": "animagine-xl-4"})
         if self.path == "/loras": return self._send(200, {"loras": ["studio-house-style", "thick-ink"], "triggers": {"studio-house-style": "ohwx-style"}})
         if self.path.startswith("/dataset/sample"):
@@ -38,7 +38,7 @@ class H(BaseHTTPRequestHandler):
             if step < total: return self._send(200, {"status": "running", "progress": {"step": step, "total": total}})
             img = "data:image/png;base64," + base64.b64encode(png(min(256, j["req"]["width"]), min(256, j["req"]["height"]), j["req"]["seed"])).decode()
             words = lambda t: int(len((t or "").replace(",", " ").split()) * 1.3)
-            return self._send(200, {"status": "done", "result": {"image": img, "seed": j["req"]["seed"], "model": "stub-placeholder", "ms": int(el * 1000), "fast": bool(j["req"].get("fast")), "promptTokens": words(j["req"].get("prompt")), "negativeTokens": words(j["req"].get("negative")), "chunks": 1 + words(j["req"].get("prompt")) // 75}})
+            return self._send(200, {"status": "done", "result": {"image": img, "seed": j["req"]["seed"], "model": "stub-placeholder", "ms": int(el * 1000), "fast": bool(j["req"].get("fast")), "promptTokens": words(j["req"].get("prompt")), "negativeTokens": words(j["req"].get("negative")), "chunks": 1 + words(j["req"].get("prompt")) // 75, "detail": ({"regions": [{"kind": "face", "box": [10, 10, 60, 60]}, {"kind": "hand", "box": [80, 120, 110, 150]}], "skipped": 0} if j["req"].get("detail") and not j["req"].get("fast") else None)}})
         self._send(404, {"error": "not found"})
     def do_POST(self):
         n = int(self.headers.get("content-length", 0)); body = json.loads(self.rfile.read(n) or b"{}")
