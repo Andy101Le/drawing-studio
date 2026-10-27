@@ -35,3 +35,33 @@ def test_feather_mask_is_solid_in_the_middle_and_soft_at_the_edge():
     m = feather_mask(128, 0.12)
     assert m.getpixel((64, 64)) == 255
     assert m.getpixel((1, 64)) < 60
+
+
+def test_hand_patch_widens_and_asks_for_a_grip_when_a_weapon_is_named():
+    """run_detail with a fake engine: one hand region, weapon set; the inpaint call must see the grip prompt and a wider box."""
+    from sidecar import detail
+    from PIL import Image
+    calls = []
+    class KP:  # a keypoint
+        def __init__(s, x, y): s.x, s.y, s.score = x, y, 1.0
+    class Body:
+        keypoints = [None] * 18
+    class Pose:
+        body = Body(); left_hand = [KP(0.45 + i * 0.01, 0.5 + i * 0.01) for i in range(8)]; right_hand = None
+    class Det:
+        def detect_poses(s, img, include_hand, include_face): return [Pose()]
+    class Res:
+        def __init__(s, im): s.images = [im]
+    class Eng:
+        family = "sd15"; txt = None
+        def pose_detector(s): return Det()
+        def inpaint(s, **kw): calls.append(kw); return Res(kw["image"])
+    img = Image.new("RGB", (512, 512), "white")
+    _, rep = detail.run_detail(Eng(), img, {"hands": True, "faces": False, "eyes": False, "weapon": "gun"}, "", "", {"prompt": "x"})
+    assert rep["regions"] and rep["regions"][0]["kind"] == "hand"
+    assert "gripping a gun" in calls[0]["prompt"] and "gun fused with hand" in calls[0]["negative_prompt"]
+    x0, y0, x1, y1 = rep["regions"][0]["box"]
+    assert x1 - x0 >= int(0.07 * 512) * (1 + 2 * 0.6) - 2  # the 0.6 padding, not the default 0.35
+    _, rep2 = detail.run_detail(Eng(), img, {"hands": True, "faces": False, "eyes": False}, "", "", {"prompt": "x"})
+    assert "five fingers" in calls[1]["prompt"] and "gripping" not in calls[1]["prompt"]
+    assert (rep2["regions"][0]["box"][2] - rep2["regions"][0]["box"][0]) < (x1 - x0)

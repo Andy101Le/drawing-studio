@@ -33,7 +33,20 @@ export const MANGA_LOOK_TAGS = ["monochrome", "greyscale", "manga", "lineart", "
 /** Added to the negative prompt with the manga look: colour, and the model drawing its own panel grid or lettering. */
 export const MANGA_LOOK_NEGATIVE = "color, colorful, 3d, cgi, render, realistic, photo, airbrush, smooth shading, gradient shading, western comic, multiple views, comic panels, panel border, speech bubble, text, sound effects, signature, watermark";
 /** what the Anatomy guard appends to every negative prompt: the usual hand, limb and eye failures by name */
-export const ANATOMY_NEGATIVE = "bad hands, extra fingers, missing fingers, fused fingers, too many fingers, extra limbs, missing limbs, extra arms, extra legs, bad anatomy, deformed, malformed limbs, asymmetrical eyes, cross-eyed, extra eyes, bad feet";
+export const ANATOMY_NEGATIVE = "bad hands, extra fingers, missing fingers, fused fingers, too many fingers, extra limbs, missing limbs, extra arms, extra legs, bad anatomy, deformed, malformed limbs, asymmetrical eyes, cross-eyed, extra eyes, bad feet, extra objects, floating objects, objects growing from body, stray limbs, disconnected limbs, mutated body";
+/** words that mean the picture has a weapon in it; the weapon guard turns on when one is in the prompt or tags */
+export const WEAPON_WORDS = ["gun", "handgun", "pistol", "revolver", "rifle", "shotgun", "assault rifle", "sniper rifle", "submachine gun", "machine gun", "weapon", "sword", "katana", "blade", "dagger", "knife", "spear", "axe", "bow", "staff"];
+export function weaponIn(text: string): string | null {
+  const tags = text.toLowerCase().split(/[,\n]+/).map((t) => t.trim().replace(/^[([]+|[)\]]+$/g, "").replace(/:\s*[+-]?[\d.]+\s*$/, "").trim());
+  for (const w of WEAPON_WORDS) if (tags.some((t) => t === w || t.endsWith(" " + w) || t.startsWith(w + " ") || t.includes(" " + w + " "))) return w;
+  return null;
+}
+/** what the weapon guard adds: how a weapon is held, and the ways a model gets one wrong (fused with the arm, floating, duplicated) */
+export const weaponPositive = (w: string): string[] => {
+  const gun = /gun|pistol|revolver|rifle|shotgun/.test(w);
+  return [`holding ${w}`, gun ? "two-handed grip, finger on trigger, aiming down sights" : "both hands on the hilt, proper grip", `(${w} held in hands:1.1)`, "correct weapon proportions", "weapon separate from body"];
+};
+export const weaponNegative = (w: string): string => `${w} fused with hand, ${w} growing from arm, ${w} coming out of body, floating ${w}, extra ${w}, two ${w}s, duplicate weapon, weapon merged with body, weapon without hand, arm merged with weapon, extra arms, misplaced weapon, broken ${w}, deformed ${w}`;
 /** what the Anatomy guard adds to the positive side (weighted lightly so it does not take over the subject) */
 export const ANATOMY_POSITIVE = ["(correct anatomy:1.1)", "five fingers", "symmetrical eyes"];
 

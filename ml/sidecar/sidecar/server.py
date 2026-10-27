@@ -413,6 +413,9 @@ class Engine:
                 t = self.lora_triggers().get(item.get("name", "")); 
                 if t: style.append(t)
             if cancelled.is_set(): raise InterruptedError("cancelled")
+            # a named weapon switches the hand patches to a "gripping" prompt and widens them to take the weapon in
+            from .actions import weapon_in
+            d = {**d, "weapon": weapon_in(req.prompt)}
             img, self.last_detail = run_detail(self, img, d, ", ".join(style), req.negative, common, progress=lambda i, n: progress(req.steps, req.steps, None))
         return img
 
@@ -601,6 +604,21 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         from .actions import remove_item
         try: return {"movedTo": remove_item(os.path.join(DATA, "liked"), body.get("id", ""))}
         except FileNotFoundError: raise HTTPException(404, "no such image")
+    @app.post("/describe")
+    def describe_image(body: dict):
+        """
+        What the tagger sees in a result, shaped for the Keep form: a name, the action folder and a
+        caption built from the picture rather than from the prompt that asked for it. The prompt only
+        contributes LoRA trigger words, which a character LoRA needs in its captions.
+        """
+        eng = state["engine"]
+        if eng is None: raise HTTPException(503, "model loading")
+        from .actions import describe
+        img = _b64_to_image(body.get("image", ""))
+        tags = eng.tag(img, float(body.get("threshold", 0.35)))
+        known = set(eng.lora_triggers().values()); prompt = (body.get("prompt") or "").lower()
+        triggers = [t for t in known if t and t.lower() in prompt]
+        return {**describe(tags, triggers), "tags": tags}
     @app.post("/dataset/suggest")
     def dataset_suggest(body: dict):
         """Tags the WD14 tagger sees in a kept image, to fill in a weak caption."""
