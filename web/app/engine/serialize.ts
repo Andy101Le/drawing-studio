@@ -16,6 +16,7 @@ interface Manifest {
   onion: { prev: number; next: number; enabled: boolean };
   panels: Doc["panels"];
   balloons?: Doc["balloons"];
+  fx?: Doc["fx"];
   mode?: Doc["mode"];
   surface?: Doc["surface"];
   camera?: Doc["camera"];
@@ -35,7 +36,7 @@ export async function serializeDoc(doc: Doc, coldBytes?: (t: import("./document.
     version: 1, name: doc.name, width: doc.width, height: doc.height, dpi: doc.dpi, fps: doc.fps,
     exposure: doc.exposure, currentFrame: doc.currentFrame, activeLayerId: doc.activeLayerId,
     onion: { prev: doc.onionPrev, next: doc.onionNext, enabled: doc.onionEnabled },
-    panels: doc.panels, balloons: doc.balloons, mode: doc.mode, surface: doc.surface, camera: doc.camera,
+    panels: doc.panels, balloons: doc.balloons, fx: doc.fx, mode: doc.mode, surface: doc.surface, camera: doc.camera,
     frames: doc.frames.map((f) => ({ id: f.id, label: f.label, note: f.note, viseme: f.viseme, dialog: f.dialog, layers: f.layers.map((l) => ({
       id: l.id, name: l.name, kind: l.kind, visible: l.visible, opacity: l.opacity, blend: l.blend, locked: l.locked, transform: l.transform, tone: l.tone, panelMask: l.panelMask, paths: l.paths, clipBelow: l.clipBelow, parent: l.parent, collapsed: l.collapsed, keys: l.keys,
     })) })),
@@ -66,7 +67,7 @@ export async function deserializeDoc(bytes: Uint8Array, idMapOut?: Map<number, n
   doc.name = manifest.name; doc.width = manifest.width; doc.height = manifest.height; doc.dpi = manifest.dpi; doc.fps = manifest.fps as Doc["fps"];
   doc.exposure = manifest.exposure; doc.currentFrame = manifest.currentFrame;
   doc.onionPrev = manifest.onion.prev; doc.onionNext = manifest.onion.next; doc.onionEnabled = manifest.onion.enabled;
-  doc.panels = manifest.panels; doc.balloons = manifest.balloons ?? []; doc.mode = manifest.mode ?? "manga"; if (manifest.surface) doc.surface = { ...doc.surface, ...manifest.surface }; doc.camera = manifest.camera ?? [];
+  doc.panels = manifest.panels; doc.balloons = manifest.balloons ?? []; doc.fx = manifest.fx ?? []; doc.mode = manifest.mode ?? "manga"; if (manifest.surface) doc.surface = { ...doc.surface, ...manifest.surface }; doc.camera = manifest.camera ?? [];
   const layerById = new Map<number, Layer>();
   const idMap = new Map<number, number>();
   doc.frames = manifest.frames.map((mf) => {

@@ -10,7 +10,7 @@ import { TileCache } from "../engine/tile-cache.js";
 import type { Selection, Floating, SelMode } from "../engine/selection.js";
 import { Keymap } from "./keymap.js";
 
-export type Tool = "brush" | "eraser" | "vector" | "node" | "fill" | "select" | "wand" | "move" | "text" | "ruler" | "gradient" | "pan" | "zoom" | "rotate" | "panel-cut" | "eyedrop";
+export type Tool = "brush" | "eraser" | "vector" | "node" | "fill" | "select" | "wand" | "move" | "text" | "fx" | "ruler" | "gradient" | "pan" | "zoom" | "rotate" | "panel-cut" | "eyedrop";
 
 export class AppState {
   doc = new Doc();
@@ -64,6 +64,9 @@ export class AppState {
   // ---- text / balloons ----
   selectedBalloon: number | null = null;
   balloonKind: import("../engine/manga.js").BalloonKind = "speech";
+  // ---- manga effects ----
+  selectedFx: number | null = null;
+  fxKind: import("../engine/manga-fx.js").FxKind = "speed";
   clipboard: { canvas: HTMLCanvasElement; x: number; y: number; mask: Selection } | null = null;
   fillTolerance = 0.12;
   fillMode: "contiguous" | "global" = "contiguous";

@@ -9,6 +9,9 @@ import { h, clear, field, slider } from "./dom.js";
 import { PAGE_PRESETS, PANEL_TEMPLATES, applyPanelTemplate, slantPanels, type BalloonKind } from "../engine/manga.js";
 import { pageToPanel } from "../engine/panels.js";
 import { storyStrip, ensureStory } from "./story.js";
+import { bakeFx, fxBox, panelAtPoint, type FxKind } from "../engine/manga-fx.js";
+
+const FX_KINDS: Array<[FxKind, string, string]> = [["speed", "Speed lines", "parallel lines across the box in the angle set below; the anchor is only the box centre"], ["focus", "Focus lines", "lines from the box edge in toward the anchor dot, leaving a clear circle around it"], ["flash", "Impact flash", "a white star with an inked rim around the anchor, spikes flying out"], ["tone", "Tone ramp", "screentone whose coverage fades across the box in the angle set below"], ["sfx", "SFX lettering", "outlined lettering at the anchor; a click places it, drag rotates nothing: set the angle below"]];
 
 const KINDS: Array<[BalloonKind, string]> = [["speech", "Speech"], ["thought", "Thought"], ["shout", "Shout"], ["whisper", "Whisper"], ["caption", "Caption"], ["none", "Free text / SFX"]];
 
@@ -103,6 +106,53 @@ export function mangaPanel(app: AppState): HTMLElement {
         h("button", { onClick: () => { b.fill = b.fill === "#ffffff" ? "#141414" : "#ffffff"; b.textColor = b.fill === "#ffffff" ? "#141414" : "#ffffff"; upd(); } }, "Invert (black balloon)"),
         h("button", { title: "Delete balloon", "data-keys": "Delete", onClick: () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete" })) }, "Delete")))
       : h("p", { class: "dim", style: { fontSize: "12px" } }, "Text tool (X): drag on the page to place a balloon of the kind chosen below, drag a balloon to move it, drag the blue dot to aim the tail. Select one to edit its text here.");
+    // ---- effects editor ----
+    const f = d.fx.find((q) => q.id === app.selectedFx) ?? null;
+    const fxEditor = f ? (() => {
+      const box = fxBox(f, d.panels);
+      const anchorSel = h("select", { title: "Anchoring", "data-help": "Free: the box is where you dragged it. Panel: the box follows that panel's bounds and the lines stop at its border, so nothing crosses a gutter.", onChange: (e: Event) => {
+        const v = (e.target as HTMLSelectElement).value; const before = f.panelId;
+        const after = v === "free" ? null : Number(v);
+        if (after !== null && f.panelId === null) { f.x = box.x; f.y = box.y; f.w = box.w; f.h = box.h; }
+        f.panelId = after; app.history.pushCustom("Anchor effect", () => { f.panelId = before; upd(); render(); }, () => { f.panelId = after; upd(); render(); }); upd(); render();
+      } }, h("option", { value: "free", selected: f.panelId === null }, "free box"), ...d.panels.map((p, i) => h("option", { value: String(p.id), selected: f.panelId === p.id }, `panel ${i + 1}`)));
+      const common = [
+        field("Kind", h("select", { onChange: (e: Event) => { f.kind = (e.target as HTMLSelectElement).value as FxKind; upd(); render(); } }, ...FX_KINDS.map(([k, n]) => h("option", { value: k, selected: f.kind === k }, n)))),
+        h("p", { class: "dim", style: { fontSize: "11px", margin: "2px 0" } }, FX_KINDS.find(([k]) => k === f.kind)![2]),
+        field("Anchor to", h("div", { class: "row", style: { gap: "6px" } }, anchorSel, h("button", { title: "Snap to the panel under the anchor", onClick: () => { const p = panelAtPoint(d.panels, f.anchor.x, f.anchor.y); if (!p) { alert("The anchor is not inside a panel."); return; } const before = f.panelId; f.panelId = p.id; app.history.pushCustom("Anchor effect", () => { f.panelId = before; upd(); render(); }, () => { f.panelId = p.id; upd(); render(); }); upd(); render(); } }, "Under anchor"))),
+      ];
+      const lines = f.kind === "speed" || f.kind === "focus" || f.kind === "flash" ? [
+        field("Density", slider(0, 1, 0.01, f.density, (v) => { f.density = v; upd(); }), () => `${Math.round(f.density * 100)}%`),
+        field(f.kind === "speed" ? "Length" : "Clear centre", slider(0.02, 1, 0.01, f.length, (v) => { f.length = v; upd(); }), () => `${Math.round(f.length * 100)}%`),
+        field("Jitter", slider(0, 1, 0.01, f.jitter, (v) => { f.jitter = v; upd(); }), () => `${Math.round(f.jitter * 100)}%`),
+        field("Weight", slider(0.5, Math.max(4, d.dpi * 0.08), 0.5, f.weight, (v) => { f.weight = v; upd(); }), () => `${f.weight.toFixed(1)} px`),
+        f.kind === "speed" ? field("Angle", slider(-180, 180, 1, f.angle, (v) => { f.angle = v; upd(); }), () => `${Math.round(f.angle)}°`) : null,
+        h("div", { class: "row", style: { gap: "6px" } }, h("button", { title: "Reshuffle", onClick: () => { f.seed = (Math.random() * 1e6) | 0; upd(); render(); } }, "Reshuffle"), h("span", { class: "dim", style: { fontSize: "11px" } }, `seed ${f.seed}`)),
+      ] : f.kind === "tone" ? [
+        field("From", slider(0, 1, 0.01, f.toneFrom, (v) => { f.toneFrom = v; upd(); }), () => `${Math.round(f.toneFrom * 100)}%`),
+        field("To", slider(0, 1, 0.01, f.toneTo, (v) => { f.toneTo = v; upd(); }), () => `${Math.round(f.toneTo * 100)}%`),
+        field("Direction", slider(-180, 180, 1, f.angle, (v) => { f.angle = v; upd(); }), () => `${Math.round(f.angle)}° (${f.angle === 90 ? "top to bottom" : f.angle === 0 ? "left to right" : f.angle === -90 ? "bottom to top" : f.angle === 180 || f.angle === -180 ? "right to left" : "diagonal"})`),
+        field("Lines/inch", slider(20, 85, 2.5, f.lpi, (v) => { f.lpi = v; upd(); }), () => `${f.lpi} lpi`),
+      ] : [
+        h("textarea", { rows: 2, style: { width: "100%", font: "13px monospace" }, placeholder: "BAM", onInput: (e: Event) => { f.text = (e.target as HTMLTextAreaElement).value; upd(); } }, f.text),
+        field("Size", slider(Math.round(d.dpi * 0.1), Math.round(d.dpi * 2), 1, f.size, (v) => { f.size = v; upd(); }), () => `${f.size} px`),
+        field("Angle", slider(-90, 90, 1, f.angle, (v) => { f.angle = v; upd(); }), () => `${Math.round(f.angle)}°`),
+        field("Slant", slider(-40, 40, 1, f.slant, (v) => { f.slant = v; upd(); }), () => `${Math.round(f.slant)}°`),
+        field("Outline", slider(0, Math.round(d.dpi * 0.1), 0.5, f.outline, (v) => { f.outline = v; upd(); }), () => `${f.outline.toFixed(1)} px`),
+        field("Halo", slider(0, Math.round(d.dpi * 0.15), 0.5, f.halo, (v) => { f.halo = v; upd(); }), () => `${f.halo.toFixed(1)} px`),
+        field("Font", h("select", { style: { width: "100%" }, onChange: (e: Event) => { f.font = (e.target as HTMLSelectElement).value; upd(); } }, ...fontChoices(f.font).map((ff) => h("option", { value: ff.css, selected: ff.css === f.font, style: { fontFamily: ff.css } }, ff.label)))),
+        h("div", { class: "row", style: { gap: "6px" } }, h("button", { onClick: () => { const w = f.fill === "#ffffff"; f.fill = w ? "#141414" : "#ffffff"; f.ink = w ? "#ffffff" : "#141414"; upd(); } }, "Invert"), h("button", { onClick: () => { f.bold = !f.bold; upd(); } }, f.bold ? "Bold: on" : "Bold: off")),
+      ];
+      return h("div", {}, ...common, ...lines,
+        field("Opacity", slider(0.05, 1, 0.01, f.opacity, (v) => { f.opacity = v; upd(); }), () => `${Math.round(f.opacity * 100)}%`),
+        h("div", { class: "row", style: { gap: "6px", marginTop: "6px" } },
+          h("button", { title: "Bake to layer", "data-help": "Turn this effect into pixels on a new layer (named after it) and remove the vector version, so you can paint over it or erase parts of it. Undo brings the vector back.", onClick: () => {
+            const idx = d.fx.indexOf(f); const layer = bakeFx(d, f); d.fx.splice(idx, 1); app.selectedFx = null;
+            app.history.pushCustom("Bake effect", () => { d.removeLayer(layer.id); d.fx.splice(idx, 0, f); app.invalidate(); app.emit("layers"); app.emit("fx"); }, () => { d.drawing.layers.push(layer); d.fx.splice(d.fx.indexOf(f), 1); app.invalidate(); app.emit("layers"); app.emit("fx"); });
+            app.invalidate(); app.emit("layers"); app.emit("fx");
+          } }, "Bake to layer"),
+          h("button", { title: "Delete effect", "data-keys": "Delete", onClick: () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete" })) }, "Delete")));
+    })() : h("p", { class: "dim", style: { fontSize: "12px" } }, "FX tool (F): drag a box on the page to place an effect of the kind chosen above (a click is enough for SFX lettering), drag one to move it, drag the blue dot to aim it. Select one to edit it here. Anchor it to a panel and it stops at the panel border.");
     root.append(h("h3", {}, "Production mode"), modeRow,
       h("div", { class: "sep" }), storyStrip(app, (kind) => void exportChapter(app, kind)),
       h("div", { class: "sep" }), h("h3", {}, "Page preset"),
@@ -115,9 +165,13 @@ export function mangaPanel(app: AppState): HTMLElement {
       h("div", { class: "sep" }), h("h3", {}, "Balloons & lettering (X)"),
       field("New balloon", h("select", { onChange: (e: Event) => { app.balloonKind = (e.target as HTMLSelectElement).value as BalloonKind; } }, ...KINDS.map(([k, n]) => h("option", { value: k, selected: app.balloonKind === k }, n)))),
       editor,
-      h("div", { class: "kv", style: { marginTop: "6px" } }, h("span", {}, "balloons"), h("b", {}, String(d.balloons.length))));
+      h("div", { class: "kv", style: { marginTop: "6px" } }, h("span", {}, "balloons"), h("b", {}, String(d.balloons.length))),
+      h("div", { class: "sep" }), h("h3", {}, "Manga effects (F)"),
+      field("New effect", h("select", { title: "Effect kind", onChange: (e: Event) => { app.fxKind = (e.target as HTMLSelectElement).value as FxKind; } }, ...FX_KINDS.map(([k, n]) => h("option", { value: k, selected: app.fxKind === k }, n)))),
+      fxEditor,
+      h("div", { class: "kv", style: { marginTop: "6px" } }, h("span", {}, "effects"), h("b", {}, String(d.fx.length))));
   };
-  app.on("balloons", render); app.on("mode", render); app.on("panels", render); app.on("tool", () => { if (app.tool === "text") render(); });
+  app.on("balloons", render); app.on("fx", render); app.on("mode", render); app.on("panels", render); app.on("tool", () => { if (app.tool === "text" || app.tool === "fx") render(); });
   render();
   return root;
 }

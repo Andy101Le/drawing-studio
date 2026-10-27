@@ -9,6 +9,7 @@ import { OneEuro, StrokeEngine, floodFill, polygonFill, type StrokeSample } from
 import { createSelectController } from "./select-tools.js";
 import type { Tool } from "./state.js";
 import { balloonAt, newBalloon } from "../engine/manga.js";
+import { fxAt, newFx } from "../engine/manga-fx.js";
 import { nearestNode, nearestSegment, rdp, type VPt } from "../engine/vector.js";
 import { newId, type VectorPath } from "../engine/document.js";
 import { applySplit, panelAt } from "../engine/panels.js";
@@ -65,6 +66,48 @@ export function bindViewport(canvas: HTMLCanvasElement, app: AppState): StrokeDr
       if (before.x !== after.x || before.y !== after.y || before.tx !== after.tx || before.ty !== after.ty) app.history.pushCustom(d.kind === "tail" ? "Aim tail" : "Move balloon", () => apply(before), () => apply(after));
     }
     app.invalidate(); app.emit("balloons");
+  }
+  // ---- manga effects tool: like balloons: drag on empty space creates one of app.fxKind, drag inside
+  // moves it (box and anchor together), drag the blue anchor dot re-aims it ----
+  let fxDrag: { kind: "create" | "move" | "anchor"; start: { x: number; y: number }; f: import("../engine/manga-fx.js").Fx; orig: { x: number; y: number; ax: number; ay: number } } | null = null;
+  function fxDown(e: PointerEvent) {
+    const p = docPt(e); const z = app.renderer.view.zoom; const list = app.doc.fx;
+    const sel = list.find((f) => f.id === app.selectedFx);
+    if (sel && Math.hypot(sel.anchor.x - p.x, sel.anchor.y - p.y) < 10 / z) { fxDrag = { kind: "anchor", start: p, f: sel, orig: { x: sel.x, y: sel.y, ax: sel.anchor.x, ay: sel.anchor.y } }; return; }
+    const hit = fxAt(list, app.doc.panels, p.x, p.y);
+    if (hit) { app.selectedFx = hit.id; fxDrag = { kind: "move", start: p, f: hit, orig: { x: hit.x, y: hit.y, ax: hit.anchor.x, ay: hit.anchor.y } }; app.invalidate(); app.emit("fx"); return; }
+    const f = newFx(app.fxKind, p.x, p.y, 1, 1, app.doc.dpi);
+    fxDrag = { kind: "create", start: p, f, orig: { x: p.x, y: p.y, ax: p.x, ay: p.y } };
+  }
+  function fxMove(e: PointerEvent) {
+    if (!fxDrag) return; const p = docPt(e); const d = fxDrag; const f = d.f;
+    if (d.kind === "create") {
+      f.x = Math.min(d.start.x, p.x); f.y = Math.min(d.start.y, p.y); f.w = Math.abs(p.x - d.start.x); f.h = Math.abs(p.y - d.start.y);
+      f.anchor = { x: f.x + f.w / 2, y: f.y + f.h / 2 };
+      if (!app.doc.fx.includes(f)) app.doc.fx.push(f); app.selectedFx = f.id;
+    } else if (d.kind === "move") {
+      const dx = p.x - d.start.x, dy = p.y - d.start.y;
+      if (f.panelId === null) { f.x = d.orig.x + dx; f.y = d.orig.y + dy; }
+      f.anchor = { x: d.orig.ax + dx, y: d.orig.ay + dy };
+    } else f.anchor = { x: p.x, y: p.y };
+    app.invalidate();
+  }
+  function fxUp(_e: PointerEvent) {
+    const d = fxDrag; fxDrag = null; if (!d) return;
+    const list = app.doc.fx; const f = d.f;
+    if (d.kind === "create") {
+      // a click (no drag) on an sfx places the lettering at the click; other kinds need a box
+      if (f.w < 8 || f.h < 8) {
+        if (f.kind === "sfx") { const s = app.doc.dpi * 1.5; f.x = d.start.x - s / 2; f.y = d.start.y - s / 2; f.w = f.h = s; f.anchor = { x: d.start.x, y: d.start.y }; if (!list.includes(f)) list.push(f); app.selectedFx = f.id; }
+        else { const i = list.indexOf(f); if (i >= 0) list.splice(i, 1); app.selectedFx = null; app.invalidate(); app.emit("fx"); return; }
+      }
+      app.history.pushCustom(`Add ${f.kind} effect`, () => { const i = list.indexOf(f); if (i >= 0) list.splice(i, 1); app.selectedFx = null; app.invalidate(); app.emit("fx"); }, () => { list.push(f); app.invalidate(); app.emit("fx"); });
+    } else {
+      const before = { ...d.orig }, after = { x: f.x, y: f.y, ax: f.anchor.x, ay: f.anchor.y };
+      const apply = (s: typeof before) => { f.x = s.x; f.y = s.y; f.anchor = { x: s.ax, y: s.ay }; app.invalidate(); app.emit("fx"); };
+      if (before.x !== after.x || before.y !== after.y || before.ax !== after.ax || before.ay !== after.ay) app.history.pushCustom(d.kind === "anchor" ? "Aim effect" : "Move effect", () => apply(before), () => apply(after));
+    }
+    app.invalidate(); app.emit("fx");
   }
   let last = { x: 0, y: 0 };
   let cutStart: { x: number; y: number } | null = null;
@@ -218,6 +261,7 @@ export function bindViewport(canvas: HTMLCanvasElement, app: AppState): StrokeDr
     if (app.tool === "panel-cut") { cutStart = docPt(e); activePointer = e.pointerId; return; }
     if (app.tool === "eyedrop") { eyedrop(e); return; }
     if (app.tool === "text") { textDown(e); activePointer = e.pointerId; e.preventDefault(); return; }
+    if (app.tool === "fx") { fxDown(e); activePointer = e.pointerId; e.preventDefault(); return; }
     if (app.tool === "ruler") { rulerDown(e); activePointer = e.pointerId; e.preventDefault(); return; }
     if (app.tool === "gradient") { gradDrag = { a: docPt(e), b: docPt(e) }; activePointer = e.pointerId; e.preventDefault(); return; }
     if (app.tool === "select" || app.tool === "wand" || app.tool === "move") { if (select.down(e, docPt(e))) { activePointer = e.pointerId; selDrag = true; e.preventDefault(); } return; }
@@ -288,6 +332,7 @@ export function bindViewport(canvas: HTMLCanvasElement, app: AppState): StrokeDr
       return;
     }
     if (textDrag) { textMove(e); return; }
+    if (fxDrag) { fxMove(e); return; }
     if (rulerDrag) { app.emit("sel-preview"); return; }
     if (gradDrag) { gradDrag.b = docPt(e); app.emit("lasso-preview", [gradDrag.a, gradDrag.b]); return; }
     if (selDrag) { select.move(e, docPt(e)); return; }
@@ -379,6 +424,7 @@ export function bindViewport(canvas: HTMLCanvasElement, app: AppState): StrokeDr
     activePointer = null;
     pendingTouch = null;
     if (textDrag) { textUp(e); return; }
+    if (fxDrag) { fxUp(e); return; }
     if (rulerDrag) { rulerUp(e); return; }
     if (gradDrag) { const g = gradDrag; gradDrag = null; app.emit("lasso-preview", null); applyGradient(g.a, docPt(e)); return; }
     rulerAnchor = null; rulerDir = null;
@@ -472,6 +518,12 @@ export function bindViewport(canvas: HTMLCanvasElement, app: AppState): StrokeDr
       const idx = list.indexOf(b); list.splice(idx, 1); app.selectedBalloon = null;
       app.history.pushCustom("Delete balloon", () => { list.splice(idx, 0, b); app.invalidate(); app.emit("balloons"); }, () => { const i = list.indexOf(b); if (i >= 0) list.splice(i, 1); app.invalidate(); app.emit("balloons"); });
       app.invalidate(); app.emit("balloons");
+    }
+    else if ((k === "delete" || k === "backspace") && app.tool === "fx" && app.selectedFx !== null) {
+      const list = app.doc.fx; const f = list.find((q) => q.id === app.selectedFx); if (!f) return;
+      const idx = list.indexOf(f); list.splice(idx, 1); app.selectedFx = null;
+      app.history.pushCustom("Delete effect", () => { list.splice(idx, 0, f); app.invalidate(); app.emit("fx"); }, () => { const i = list.indexOf(f); if (i >= 0) list.splice(i, 1); app.invalidate(); app.emit("fx"); });
+      app.invalidate(); app.emit("fx");
     }
     else if ((k === "delete" || k === "backspace") && app.selectedNode) {
       const layer = app.doc.activeLayer; const path = layer.paths.find((x) => x.id === app.selectedNode!.pathId);

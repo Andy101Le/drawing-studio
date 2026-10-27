@@ -217,6 +217,8 @@ export class Doc {
   panels: Panel[] = [];
   /** word balloons and lettering (manga.ts), drawn above the raster layers */
   balloons: import("./manga.js").Balloon[] = [];
+  /** manga effects (manga-fx.ts): speed lines, focus lines, flashes, tone ramps, sfx lettering; drawn above the layers, under the balloons */
+  fx: import("./manga-fx.js").Fx[] = [];
   /** production mode: manga pages or 2D animation */
   mode: "manga" | "anime" = "manga";
   /** camera keys (tween.ts): frames the export and the field guide */

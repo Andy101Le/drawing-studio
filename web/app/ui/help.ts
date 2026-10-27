@@ -12,6 +12,7 @@ export const HELP: Record<string, string> = {
   "tool.eraser": "Erase on the active layer with the eraser preset (hard, soft or kneaded). Erasing another artist's pixels in a live session asks them first.",
   "tool.fill": "Click inside a shape to fill it. Small gaps in the outline are closed automatically; Tolerance, Expand and Reference (all layers) are in the Brush tab under Fill.",
   "tool.gradient": "Drag to lay a colour ramp: start where the colour is solid, release where it fades. Linear or radial, to transparent or to a second colour, inside the selection if there is one.",
+  "tool.fx": "Drag on the page to place a manga effect of the kind chosen in the Manga tab (speed lines, focus lines, impact flash, tone ramp, SFX lettering). Drag one to move it, drag the blue dot to aim it. Edit density, length, jitter and anchoring in the Manga tab.",
   "tool.text": "Click to place a speech balloon or caption, drag to size it, double-click to type. Edit tails, shapes and fonts in the Manga tab.",
   "Select": "Marquee and lasso selection. Drag a rectangle; switch to lasso or polygon in the Brush tab under Selection. Shift adds, Alt subtracts. Ctrl+T then moves what is inside.",
   "Magic wand": "Click a colour to select everything connected to it within the tolerance. Shift-click adds more areas.",

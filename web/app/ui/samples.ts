@@ -18,7 +18,7 @@ export async function openSample(app: AppState, def: SampleDef): Promise<void> {
   const doc = await deserializeDoc(new Uint8Array(await res.arrayBuffer()));
   app.emit("doc-reset");
   for (const l of app.doc.drawing.layers) resetMedia(l);
-  app.history.clear(); app.story = null; app.selectedBalloon = null; app.selectedNode = null;
+  app.history.clear(); app.story = null; app.selectedBalloon = null; app.selectedFx = null; app.selectedNode = null;
   doc.name = `${def.name} (copy)`;
   app.doc = doc; app.cache.index(app.doc); app.renderer.fitPage(app.doc); app.invalidate();
   app.emit("layers"); app.emit("timeline"); app.emit("panels"); app.emit("balloons"); app.emit("selection"); app.emit("doc-loaded"); app.emit("story"); app.emit("vector");
