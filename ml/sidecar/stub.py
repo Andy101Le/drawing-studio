@@ -1,5 +1,5 @@
 """Contract stub: the same HTTP surface as the real sidecar with a placeholder image, no model. Used by tests and by anyone wiring the app without a GPU."""
-import json, base64, io, struct, zlib, threading, time, uuid, sys
+import io, json, base64, struct, zlib, threading, time, uuid, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 def png(w, h, seed):
@@ -62,6 +62,17 @@ class H(BaseHTTPRequestHandler):
             words = lambda t: int(len((t or "").replace(",", " ").split()) * 1.3)
             return self._send(200, {"prompt": words(body.get("prompt")) + 4, "negative": words(body.get("negative")) + 12, "chunk": 75})
         if self.path == "/tag": return self._send(200, {"tags": [{"tag": "1girl", "p": 0.93}, {"tag": "short hair", "p": 0.81}, {"tag": "glasses", "p": 0.66}, {"tag": "monochrome", "p": 0.4}]})
+        if self.path == "/lineart":
+            # a stand-in for the anime lineart detector: edges of the picture itself (PIL), white on black,
+            # so the Redraw path behaves like it would with the real model
+            try:
+                from PIL import Image, ImageFilter, ImageOps
+                raw = base64.b64decode(body["image"].split(",", 1)[1]); im = Image.open(io.BytesIO(raw)).convert("L")
+                e = ImageOps.autocontrast(im.filter(ImageFilter.FIND_EDGES)).filter(ImageFilter.MaxFilter(3))
+                buf = io.BytesIO(); e.convert("RGB").save(buf, format="PNG")
+                return self._send(200, {"image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), "width": im.width, "height": im.height})
+            except Exception as ex:
+                return self._send(500, {"error": str(ex)})
         if self.path == "/upscale":
             sc = int(body.get("scale", 2)); img = "data:image/png;base64," + base64.b64encode(png(128 * sc, 128 * sc, 5)).decode(); return self._send(200, {"image": img, "width": 128 * sc, "height": 128 * sc})
         if self.path == "/generate":

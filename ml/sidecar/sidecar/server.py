@@ -521,6 +521,14 @@ def build_app(model: str, controlnet: str, ip_adapter: bool, offload: bool, prof
         eng = state["engine"]
         if eng is None: raise HTTPException(503, "model loading")
         return {"tags": eng.tag(_b64_to_image(body["image"]), float(body.get("threshold", 0.35)))}
+    @app.post("/lineart")
+    def lineart(body: dict):
+        """Anime lineart from a picture (controlnet_aux LineartAnimeDetector): white lines on black, same size as the input. The Redraw tab uses it instead of its own line detection when asked."""
+        eng = state["engine"]
+        if eng is None: raise HTTPException(503, "model loading")
+        img = _b64_to_image(body["image"]); w, h = img.size
+        out = eng.preprocess("lineart_anime", img).convert("L").resize((w, h), Image.BICUBIC)
+        return {"image": _image_to_b64(out.convert("RGB")), "width": w, "height": h}
     @app.post("/upscale")
     def upscale(body: dict):
         eng = state["engine"]

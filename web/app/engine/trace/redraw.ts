@@ -76,7 +76,7 @@ export function layerPixels(layer: Layer, region: Region, maxMpx: number): Sourc
 
 let worker: Worker | null = null; let jobId = 0;
 /** run the analysis in a worker (falls back to this thread if workers are unavailable) */
-export function analyse(img: ImageData, params: Partial<TraceParams>, progress?: Progress, mask: Uint8Array | null = null): { promise: Promise<TraceResult>; cancel: () => void } {
+export function analyse(img: ImageData, params: Partial<TraceParams>, progress?: Progress, mask: Uint8Array | null = null, lines: Uint8Array | null = null): { promise: Promise<TraceResult>; cancel: () => void } {
   const id = ++jobId; let cancelled = false;
   const promise = new Promise<TraceResult>((resolve, reject) => {
     try {
@@ -92,10 +92,11 @@ export function analyse(img: ImageData, params: Partial<TraceParams>, progress?:
       };
       w.addEventListener("message", onMsg);
       const copy = new Uint8ClampedArray(img.data); // the caller keeps its ImageData for scoring
-      const m = mask ? mask.slice() : null;
-      w.postMessage({ id, w: img.width, h: img.height, rgba: copy, params, mask: m }, m ? [copy.buffer, m.buffer] : [copy.buffer]);
+      const m = mask ? mask.slice() : null; const ln = lines ? lines.slice() : null;
+      const transfer: Transferable[] = [copy.buffer]; if (m) transfer.push(m.buffer); if (ln) transfer.push(ln.buffer);
+      w.postMessage({ id, w: img.width, h: img.height, rgba: copy, params, mask: m, lines: ln }, transfer);
     } catch {
-      void import("./trace-core.js").then(({ trace }) => resolve(trace(img.data, img.width, img.height, params, (s, p) => progress?.(s, p * 0.6), mask))).catch(reject);
+      void import("./trace-core.js").then(({ trace }) => resolve(trace(img.data, img.width, img.height, params, (s, p) => progress?.(s, p * 0.6), mask, lines))).catch(reject);
     }
   });
   return { promise, cancel: () => { cancelled = true; worker?.terminate(); worker = null; } };
@@ -239,3 +240,25 @@ export function scoreRedraw(doc: Doc, srcImg: ImageData, r: TraceResult, region:
   const P = n1 ? tp1 / n1 : 1, R = n2 ? tp2 / n2 : 1;
   return { deltaE: sum / M, within10: ok / M, coverage: cnt / N, lineF1: P + R ? (2 * P * R) / (P + R) : 0, linePrecision: P, lineRecall: R };
 }
+
+/**
+ * Collapse a redraw group into one raster layer: the visible layers composited with their blend
+ * modes and tones baked as dot screens (renderer.flatten does the baking). The caller decides what
+ * happens to the parts; they can be re-baked later with another look even after leaving the document.
+ */
+export function bakeRedraw(doc: Doc, flatten: (doc: Doc, scale: number, ids: Set<number>) => HTMLCanvasElement, built: { layers: Layer[]; group: Layer }, region: Region & { panelId?: number }, name: string): Layer {
+  const ids = new Set(built.layers.filter((l) => l.kind !== "group" && l.visible).map((l) => l.id));
+  // the parts may already have been taken out of the document (re-baking a single layer): put them in for the composite
+  const list = doc.drawing.layers; const temp = built.layers.filter((l) => !list.includes(l)); list.push(...temp);
+  let flat: HTMLCanvasElement;
+  try { flat = flatten(doc, 1, ids); } finally { for (const l of temp) { const i = list.indexOf(l); if (i >= 0) list.splice(i, 1); } }
+  const out = doc.addLayer("raster"); out.name = name;
+  if (region.panelId !== undefined) out.panelMask = region.panelId;
+  for (const t of out.tilesIn(region.x0, region.y0, region.x1, region.y1, true)) {
+    if (!t.ctx) continue; const g = t.ctx as CanvasRenderingContext2D;
+    g.drawImage(flat, t.x * TILE, t.y * TILE, TILE, TILE, 0, 0, TILE, TILE); t.generation++;
+  }
+  out.generation++;
+  return out;
+}
+

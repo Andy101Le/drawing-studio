@@ -4,7 +4,7 @@
  * reference image), the usual sampler parameters, and a results strip whose entries land on
  * new layers with their parameters recorded, so any result can be reproduced or re-seeded.
  */
-import { setRedrawSource } from "./redraw-panel.js";
+import { setRedrawSource, redrawAsMangaPanel } from "./redraw-panel.js";
 import { TAG_GROUPS, PANEL_RECIPES, MANGA_LOOK_TAGS, MANGA_LOOK_NEGATIVE, ANATOMY_NEGATIVE, ANATOMY_POSITIVE } from "./manga-tags.js";
 import { POSE_PRESETS, drawPose, fitPose, hitJoint, mirrorPose, moveJoint, poseToPng, type Pose } from "../engine/pose.js";
 import { DESIGN_DEFAULTS, designPrompt, renderDesign, renderStyleTags, type Design } from "./character-design.js";
@@ -386,6 +386,7 @@ export function generatePanel(app: AppState): HTMLElement {
           j.result && runner.provider.rate ? h("button", { title: "Keep", "data-help": "Name this image, pick its action folder and check the caption, then save it into the training set on your machine. The caption is what the model learns from. Shift-click keeps it at once with the prompt as caption.", onClick: (e: MouseEvent) => { if (e.shiftKey) void rate("liked", j); else void openKeep(j); } }, "✓ Keep") : null,
           j.result && runner.provider.rate ? h("button", { title: "Discard", "data-help": "File this as a bad result. Kept as the negative half for preference tuning; it is not used by the style trainer.", onClick: () => void rate("rejected", j) }, "✗ Discard") : null,
           j.result ? h("button", { title: "Redraw with OMNI-CELL tools", "data-help": "Rebuild this result on new layers with the app's own tools (Trace Pen ink, flats, shadows, light, screentone) in the Redraw tab.", onClick: () => setRedrawSource(app, { image: j.result!.image, region: (j.req.region as (Region & { panelId?: number }) | undefined) ?? null, name: `seed ${j.result!.seed}` }) }, "Redraw") : null,
+          j.result ? h("button", { title: "Manga panel", "data-help": "One click: lines from the anime lineart detector as real ink strokes, flats quantised into screentone layers, baked onto one layer in this panel, black and white. The Redraw tab opens with the report.", onClick: () => redrawAsMangaPanel(app, { image: j.result!.image, region: (j.req.region as (Region & { panelId?: number }) | undefined) ?? null, name: `seed ${j.result!.seed}` }) }, "Manga panel") : null,
           j.result ? h("button", { title: "Seed +1", "data-help": "Run the same job with the next seed: a close variation of this result.", onClick: () => { void runner.run({ ...j.req, seed: j.req.seed + 1, retry: 1 } as GenRequest); } }, "Seed +1") : null,
           j.status === "running" || j.status === "queued" ? h("button", { title: "Cancel", onClick: () => void runner.cancel(j) }, "Cancel") : null,
           j.error ? h("span", { class: "dim" }, j.error) : null),

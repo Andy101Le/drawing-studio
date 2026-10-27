@@ -213,3 +213,15 @@ Honest limits: none of this guarantees five fingers; it raises the hit rate, and
 
 What this does not do yet: read prose (the optional local-LLM "draft the script for me" step comes after), keep characters consistent without a character LoRA, or choose panel sizes by beat weight. Tests: `web/test/script.test.ts`, `ml/sidecar/tests/test_actions.py::test_caption_issues_and_review_edits`, `tools/qa/story.py` and `tools/qa/dataset.py` against the stub (five panels generated and placed, two balloons).
 
+## Manga pipeline and one-layer redraws (loop 23)
+
+**One layer by default.** Redraw now lands on a single raster layer (`Layers: One layer`): the group is built as before, composited with its blend modes, tones baked as real dot screens at page resolution (`renderer.bakeTone`), and the parts are dropped. Colour / Manga in the report re-bake the same layer from the parts kept in memory, so switching the look does not touch the layer list. `Separate layers (group)` is still there for editing each part. Headless on the sample: one layer, 140 tiles, dot screens present in the alpha, undo removes exactly that layer.
+
+**Found and fixed on the way:** `renderer.flatten()` drew tone layers as their raw masks, so every PNG, PDF and PSD export showed screentones as solid black. It now bakes them (`tools/qa/tonebake.py`: a 30% tone square flattens to dots, nothing outside the square).
+
+**Lines from the anime lineart detector.** `POST /lineart` runs controlnet_aux's `lineart_anime` on the picture and returns white lines on black; the Redraw tab (`Lines from: anime lineart detector`) feeds that map into `trace()` in place of its own valley detection (ink where the map is above 90, core above 170), so the ink is what an anime line model would ink, not every dark edge. Falls back to the tracer with a note when the sidecar is off. The stub answers with an edge map of the input, which keeps the regression honest: ΔE 2.5, F1 0.98 on the sample (traced lines: 2.1 / 0.98).
+
+**Manga panel, one click.** Every Generate result has a Manga panel button: manga look, black ink, detector lines, one layer, into the result's panel, run at once. The Redraw tab opens with the report.
+
+Not measured on a GPU here; the detector's real output will differ from the stub's edge map.
+
