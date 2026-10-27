@@ -76,7 +76,7 @@ export function buildQuickbar(app: AppState, openPanel: (name: string) => void):
   return bar;
 }
 
-const RAIL_ICONS: Record<string, string> = { Layers: "layers", Brush: "brush", Color: "palette", Tone: "tone", Manga: "book", Page: "page", "3D": "cube", Live: "live", Bridge: "link", Vault: "lock", Generate: "spark", Redraw: "redraw", Settings: "gear" };
+const RAIL_ICONS: Record<string, string> = { Layers: "layers", Brush: "brush", Color: "palette", Tone: "tone", Manga: "book", Page: "page", "3D": "cube", Live: "live", Bridge: "link", Vault: "lock", Generate: "spark", Redraw: "redraw", Dataset: "photos", Story: "script", Settings: "gear" };
 export function buildDock(app: AppState, defs: Array<[string, () => HTMLElement]>): { side: HTMLElement; open: (name: string) => void } {
   const side = h("div", { id: "side" });
   const rail = h("div", { class: "rail" }); const panels = h("div", { class: "panels" });

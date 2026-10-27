@@ -50,6 +50,7 @@ export interface GenRequest {
 export type GenModeAll = GenMode | "inpaint";
 export interface GenProgress { step: number; total: number; preview?: string }
 export interface GenResult { image: string; seed: number; model: string; ms: number; profile?: string; vramPeakGB?: number | null; fast?: boolean; promptTokens?: number; negativeTokens?: number; chunks?: number; detail?: { regions: Array<{ kind: string; box: number[] }>; skipped: number; error?: string } | null }
+export interface DatasetItem { id: string; action: string; name: string; caption: string; character: string; issues: string[]; mtime: number }
 export interface DatasetStats { path: string; liked: number; rejected: number; readyToTrain: boolean; /** kept images per action folder */ actions?: Record<string, number>; /** actions with fewer than 8 images */ thin?: string[]; /** flat images not yet sorted into action folders */ unsorted?: number; /** images with no caption (train on the trigger word only) */ uncaptioned?: number; /** from organize: byte-identical copies moved aside */ duplicates?: number; moved?: number }
 export interface ProviderHealth { ok: boolean; model?: string; family?: string; device?: string; vramGB?: number; freeVramGB?: number; controlnets?: string[]; profile?: string; maxPx?: number; presets?: string[]; ipAdapter?: boolean; upscaler?: boolean; embeddings?: string[]; message?: string }
 export interface Provider {
@@ -74,6 +75,14 @@ export interface Provider {
   /** the folder the sidecar would pick for a caption */
   guessAction?(caption: string): Promise<string>;
   datasetStats?(): Promise<DatasetStats>;
+  /** the kept set for review: one entry per image */
+  datasetList?(): Promise<DatasetItem[]>;
+  /** URL of a thumbnail for a kept image */
+  datasetThumb?(id: string, size?: number): string;
+  datasetUpdate?(patch: { id: string; caption?: string; action?: string; name?: string; character?: string }): Promise<{ id: string; caption: string; issues: string[] }>;
+  datasetRemove?(id: string): Promise<{ movedTo: string }>;
+  /** tagger suggestions for a kept image */
+  datasetSuggest?(id: string): Promise<Array<{ tag: string; p: number }>>;
   /** sort flat kept images into action folders by caption */
   organizeDataset?(): Promise<DatasetStats>;
   /** a few random kept images (small data URLs), different each call */
@@ -101,6 +110,11 @@ export class SidecarProvider implements Provider {
   guessAction(caption: string) { return this.json<{ action: string }>("/dataset/guess", { method: "POST", body: JSON.stringify({ caption }) }).then((r) => r.action); }
   datasetStats() { return this.json<DatasetStats>("/dataset/stats"); }
   organizeDataset() { return this.json<DatasetStats>("/dataset/organize", { method: "POST", body: "{}" }); }
+  datasetList() { return this.json<{ items: DatasetItem[] }>("/dataset/list").then((r) => r.items); }
+  datasetThumb(id: string, size = 160) { return `${this.base}/dataset/thumb?id=${encodeURIComponent(id)}&size=${size}`; }
+  datasetUpdate(patch: { id: string; caption?: string; action?: string; name?: string; character?: string }) { return this.json<{ id: string; caption: string; issues: string[] }>("/dataset/update", { method: "POST", body: JSON.stringify(patch) }); }
+  datasetRemove(id: string) { return this.json<{ movedTo: string }>("/dataset/remove", { method: "POST", body: JSON.stringify({ id }) }); }
+  datasetSuggest(id: string) { return this.json<{ tags: Array<{ tag: string; p: number }> }>("/dataset/suggest", { method: "POST", body: JSON.stringify({ id }) }).then((r) => r.tags); }
   sampleKept(n: number) { return this.json<{ images: string[]; pool: number }>(`/dataset/sample?n=${n}`); }
 }
 

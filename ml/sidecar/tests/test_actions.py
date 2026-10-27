@@ -43,3 +43,20 @@ def test_slug_is_file_safe():
     assert slug("  ") == ""
     assert slug("../../etc/passwd") == "etc-passwd"
     assert len(slug("a" * 100)) == 48
+
+def test_caption_issues_and_review_edits():
+    from sidecar.actions import caption_issues, list_items, update_item, remove_item
+    assert caption_issues("") == ["no caption"]
+    assert caption_issues("masterpiece, best quality, 1boy, running, rain, city") == []
+    assert "no action tag" in caption_issues("1girl, portrait of nothing") or "no action tag" not in caption_issues("1girl, standing")
+    d = tempfile.mkdtemp(); liked = os.path.join(d, "liked"); os.makedirs(os.path.join(liked, "misc"))
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(os.path.join(liked, "misc", "a-123456.png"))
+    with open(os.path.join(liked, "misc", "a-123456.json"), "w") as f: json.dump({"caption": "masterpiece, absurdres"}, f)
+    items = list_items(liked); assert len(items) == 1 and items[0]["issues"]
+    r = update_item(liked, items[0]["id"], caption="1boy, running, rain, city", action="running", name="Trooper Run", character="Kai")
+    assert r["id"] == "running/trooper-run-123456.png" and r["issues"] == []
+    with open(os.path.join(liked, "running", "trooper-run-123456.json")) as f: meta = json.load(f)
+    assert meta["character"] == "kai" and meta["caption"] == "1boy, running, rain, city"
+    assert open(os.path.join(liked, "running", "trooper-run-123456.txt")).read() == "1boy, running, rain, city"
+    remove_item(liked, r["id"])
+    assert list_items(liked) == [] and os.path.isfile(os.path.join(d, "removed", "trooper-run-123456.png"))

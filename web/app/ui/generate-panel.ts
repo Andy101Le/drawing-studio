@@ -411,6 +411,25 @@ export function generatePanel(app: AppState): HTMLElement {
         })() : null)),
       runner.jobs.length ? null : h("p", { class: "dim", style: { fontSize: "11px" } }, "No jobs yet."));
   };
+  /**
+   * Story tab hook: generate one panel of a script with this tab's model, look and anatomy
+   * settings, then place the result in that panel. Tags and the target panel are overridden for
+   * the job only; the user's own prompt text is kept as the style line.
+   */
+  (app as unknown as { generateFor?: unknown }).generateFor = async (o: { panelId: number; tags: string[]; place: boolean }): Promise<{ ok: boolean; error?: string }> => {
+    const keep = { panelId: st.panelId, tags: st.tags.slice(), seedMode: st.seedMode, prompt: st.prompt };
+    // the script's cast and scene lead; the user's prompt text follows as the style line
+    st.panelId = o.panelId; st.tags = [...o.tags, ...st.prompt.split(/\s*,\s*/).map((t) => t.trim()).filter(Boolean)]; st.prompt = ""; if (st.seedMode === "fixed") st.seedMode = "new";
+    try {
+      st.seed = newSeed();
+      const req = await withKeptSteering(buildRequest());
+      const rec = await runner.run(req);
+      while (rec.status === "queued" || rec.status === "running") await new Promise((r) => setTimeout(r, 300));
+      if (rec.result && o.place) await addAsLayer(rec.result.image, `Gen ${rec.req.seed}`, rec.req, rec.result.seed, rec.result.model);
+      return rec.result ? { ok: true } : { ok: false, error: rec.error ?? "no result" };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+    finally { st.panelId = keep.panelId; st.tags = keep.tags; st.seedMode = keep.seedMode; st.prompt = keep.prompt; save(); render(); }
+  };
   render(); void checkHealth();
   // the panel list follows the page: drawing, cutting or deleting panels, or a new document
   app.on("panels", () => { if (st.panelId >= 0 && !app.doc.panels.some((p) => p.id === st.panelId)) { st.panelId = -1; save(); } if (root.isConnected) render(); });

@@ -6,6 +6,8 @@
 import "./design/obsidian.css";
 import { generatePanel } from "./ui/generate-panel.js";
 import { redrawPanel } from "./ui/redraw-panel.js";
+import { datasetPanel } from "./ui/dataset-panel.js";
+import { storyPanel } from "./ui/story-panel.js";
 import { tickMedia, resetMedia } from "./engine/media.js";
 import { perfStats } from "./ui/perf-stats.js";
 import { Renderer, type RenderOptions } from "./engine/renderer.js";
@@ -101,6 +103,8 @@ const panelDefs: Array<[string, () => HTMLElement]> = [
   ["Vault", () => vaultPanel(app, vault, autosave)],
   ["Generate", () => generatePanel(app)],
   ["Redraw", () => redrawPanel(app)],
+  ["Story", () => storyPanel(app)],
+  ["Dataset", () => datasetPanel(app)],
   ["Settings", () => settingsPanel(app)],
 ];
 const dock = buildDock(app, panelDefs); const side = dock.side; openPanel = dock.open;

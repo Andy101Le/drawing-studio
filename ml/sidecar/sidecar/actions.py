@@ -136,3 +136,89 @@ def counts(root: str) -> dict:
 def uncaptioned(root: str) -> int:
     """Images with no caption at all: they train on the trigger word only and cannot be sorted by action."""
     return sum(1 for p, _ in walk_images(root) if not caption_of(p))
+
+# ---------------------------------------------------------------- reviewing the set in the app
+
+STYLE_WORDS = {"masterpiece", "best quality", "high score", "great score", "absurdres", "very aesthetic", "highly detailed", "lowres", "monochrome", "greyscale", "manga", "comic", "lineart", "screentones", "halftone", "anime screencap", "cel shading", "flat color", "clean lineart", "semi-realistic", "realistic", "photorealistic", "8k", "cinematic lighting", "depth of field", "correct anatomy", "five fingers", "symmetrical eyes"}
+
+def caption_tags(caption: str) -> list:
+    return [_clean(t) for t in _split.split(caption or "") if t.strip()]
+
+def caption_issues(caption: str, trigger: str = "") -> list:
+    """
+    Why a caption is weak, as short phrases the app shows next to the image. Empty = fine.
+    A caption teaches only what it says, so these are the things that make a LoRA learn nothing
+    or the wrong thing: no words at all, only style words, no subject, no action, and style
+    words that belong to the generator rather than to the picture.
+    """
+    tags = [t for t in caption_tags(caption) if t and t != trigger]
+    issues = []
+    if not tags: return ["no caption"]
+    content = [t for t in tags if t not in STYLE_WORDS and not t.startswith("(")]
+    if len(content) < 3: issues.append("fewer than 3 content tags")
+    if not any(t in ("1girl", "1boy", "2girls", "2boys", "solo", "multiple girls", "multiple boys", "1other", "crowd") or t.endswith("boy") or t.endswith("girl") for t in tags): issues.append("no subject (1boy, 1girl, solo...)")
+    if action_for(caption) == "misc": issues.append("no action tag")
+    style = [t for t in tags if t in STYLE_WORDS]
+    if len(style) > 4: issues.append(f"{len(style)} style/quality words (the picture does not show them)")
+    if len(tags) > 40: issues.append("over 40 tags: the first 75 tokens matter most")
+    return issues
+
+def list_items(root: str, limit: int = 500) -> list:
+    """Every kept image with its caption, folder and issues, newest first."""
+    import json as _json
+    items = []
+    for path, action in walk_images(root):
+        base = os.path.splitext(path)[0]; cap = caption_of(path)
+        meta = {}
+        try:
+            with open(base + ".json", encoding="utf-8") as f: meta = _json.load(f)
+        except Exception: pass
+        rel = os.path.relpath(path, root).replace("\\", "/")
+        items.append({"id": rel, "action": action or "unsorted", "name": os.path.basename(base), "caption": cap, "character": meta.get("character", ""), "issues": caption_issues(cap, meta.get("trigger", "")), "mtime": os.path.getmtime(path)})
+    items.sort(key=lambda it: -it["mtime"])
+    return items[:limit]
+
+def _paths_for(root: str, rel: str):
+    rel = rel.replace("\\", "/")
+    if ".." in rel.split("/"): raise ValueError("bad id")
+    path = os.path.join(root, *rel.split("/"))
+    if not os.path.isfile(path): raise FileNotFoundError(rel)
+    base = os.path.splitext(path)[0]; ext = os.path.splitext(path)[1]
+    return path, base, ext
+
+def update_item(root: str, rel: str, caption=None, action=None, name=None, character=None) -> dict:
+    """Rewrite the caption (.json + .txt), move to another action folder and/or rename. Returns the new id."""
+    import json as _json
+    path, base, ext = _paths_for(root, rel)
+    meta = {}
+    try:
+        with open(base + ".json", encoding="utf-8") as f: meta = _json.load(f)
+    except Exception: pass
+    if caption is not None: meta["caption"] = caption.strip()
+    if character is not None: meta["character"] = slug(character)
+    cap = meta.get("caption") or caption_of(path)
+    with open(base + ".json", "w", encoding="utf-8") as f: _json.dump(meta, f, indent=1)
+    with open(base + ".txt", "w", encoding="utf-8") as f: f.write(cap)
+    # move / rename
+    folder = os.path.dirname(path)
+    if action and action in ACTIONS + ["misc"]: folder = os.path.join(root, action); os.makedirs(folder, exist_ok=True)
+    stem = os.path.basename(base)
+    if name:
+        n = slug(name); tail = stem.rsplit("-", 1)[-1] if "-" in stem else stem
+        stem = f"{n}-{tail}" if n and tail.isdigit() else (n or stem)
+    target = os.path.join(folder, stem)
+    if target != base:
+        while os.path.exists(target + ext): target += "x"
+        for e in (ext, ".json", ".txt"):
+            if os.path.isfile(base + e): os.replace(base + e, target + e)
+    new_rel = os.path.relpath(target + ext, root).replace("\\", "/")
+    return {"id": new_rel, "caption": cap, "issues": caption_issues(cap)}
+
+def remove_item(root: str, rel: str) -> str:
+    """Move an image and its captions to <root>/../removed (nothing is deleted)."""
+    path, base, ext = _paths_for(root, rel)
+    dst = os.path.join(os.path.dirname(os.path.abspath(root)), "removed"); os.makedirs(dst, exist_ok=True)
+    for e in (ext, ".json", ".txt"):
+        if os.path.isfile(base + e): os.replace(base + e, os.path.join(dst, os.path.basename(base) + e))
+    return dst
+
