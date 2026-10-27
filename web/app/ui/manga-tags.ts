@@ -31,7 +31,11 @@ export const TAG_GROUPS: TagGroup[] = [
 /** Tags that make the model draw manga instead of colour illustration. */
 export const MANGA_LOOK_TAGS = ["monochrome", "greyscale", "manga", "lineart", "screentones", "high contrast"];
 /** Added to the negative prompt with the manga look: colour, and the model drawing its own panel grid or lettering. */
-export const MANGA_LOOK_NEGATIVE = "color, colorful, 3d, realistic, photo, multiple views, comic panels, panel border, speech bubble, text, sound effects, signature, watermark";
+export const MANGA_LOOK_NEGATIVE = "color, colorful, 3d, cgi, render, realistic, photo, airbrush, smooth shading, gradient shading, western comic, multiple views, comic panels, panel border, speech bubble, text, sound effects, signature, watermark";
+/** what the Anatomy guard appends to every negative prompt: the usual hand, limb and eye failures by name */
+export const ANATOMY_NEGATIVE = "bad hands, extra fingers, missing fingers, fused fingers, too many fingers, extra limbs, missing limbs, extra arms, extra legs, bad anatomy, deformed, malformed limbs, asymmetrical eyes, cross-eyed, extra eyes, bad feet";
+/** what the Anatomy guard adds to the positive side (weighted lightly so it does not take over the subject) */
+export const ANATOMY_POSITIVE = ["(correct anatomy:1.1)", "five fingers", "symmetrical eyes"];
 
 export interface PanelRecipe { name: string; hint: string; tags: string[]; aspect: number }
 

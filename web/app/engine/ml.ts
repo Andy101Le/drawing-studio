@@ -38,16 +38,20 @@ export interface GenRequest {
   referenceScale: number;
   loras: Array<{ name: string; weight: number }>;
   /** extra ControlNets, e.g. the 3D layer's depth map */
-  controls: Array<{ type: "depth"; image: string; weight: number }>;
+  controls: Array<{ type: "depth" | "pose"; image: string; weight: number }>;
   freeu: boolean;
   /** LCM-LoRA preview: a few steps, low guidance */
   fast: boolean;
+  /** redo faces, eyes and hands at full resolution after the image (sidecar detail.py) */
+  detail?: { faces: boolean; eyes: boolean; hands: boolean; strength: number; steps: number };
+  /** append the sidecar's negative embeddings (bad-hands and the like) to the negative prompt */
+  negEmbeddings?: boolean;
 }
 export type GenModeAll = GenMode | "inpaint";
 export interface GenProgress { step: number; total: number; preview?: string }
-export interface GenResult { image: string; seed: number; model: string; ms: number; profile?: string; vramPeakGB?: number | null; fast?: boolean; promptTokens?: number; negativeTokens?: number; chunks?: number }
+export interface GenResult { image: string; seed: number; model: string; ms: number; profile?: string; vramPeakGB?: number | null; fast?: boolean; promptTokens?: number; negativeTokens?: number; chunks?: number; detail?: { regions: Array<{ kind: string; box: number[] }>; skipped: number; error?: string } | null }
 export interface DatasetStats { path: string; liked: number; rejected: number; readyToTrain: boolean; /** kept images per action folder */ actions?: Record<string, number>; /** actions with fewer than 8 images */ thin?: string[]; /** flat images not yet sorted into action folders */ unsorted?: number; /** images with no caption (train on the trigger word only) */ uncaptioned?: number; /** from organize: byte-identical copies moved aside */ duplicates?: number; moved?: number }
-export interface ProviderHealth { ok: boolean; model?: string; family?: string; device?: string; vramGB?: number; freeVramGB?: number; controlnets?: string[]; profile?: string; maxPx?: number; presets?: string[]; ipAdapter?: boolean; upscaler?: boolean; message?: string }
+export interface ProviderHealth { ok: boolean; model?: string; family?: string; device?: string; vramGB?: number; freeVramGB?: number; controlnets?: string[]; profile?: string; maxPx?: number; presets?: string[]; ipAdapter?: boolean; upscaler?: boolean; embeddings?: string[]; message?: string }
 export interface Provider {
   readonly id: string; readonly name: string; readonly leavesDevice: boolean;
   health(): Promise<ProviderHealth>;
