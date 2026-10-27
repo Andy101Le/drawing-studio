@@ -60,3 +60,21 @@ def test_caption_issues_and_review_edits():
     assert open(os.path.join(liked, "running", "trooper-run-123456.txt")).read() == "1boy, running, rain, city"
     remove_item(liked, r["id"])
     assert list_items(liked) == [] and os.path.isfile(os.path.join(d, "removed", "trooper-run-123456.png"))
+
+
+def test_describe_builds_name_action_caption():
+    from sidecar.actions import describe
+    tags = [{"tag": "solo", "p": 0.95}, {"tag": "1boy", "p": 0.9}, {"tag": "helmet", "p": 0.8}, {"tag": "holding gun", "p": 0.6}, {"tag": "looking at viewer", "p": 0.5}, {"tag": "city", "p": 0.4}]
+    d = describe(tags, ["kai"])
+    assert d["caption"].startswith("kai, 1boy, solo, helmet")       # trigger first, then the subject, then confidence order
+    assert d["action"] == "shooting"
+    assert d["name"] == "1boy-shooting-helmet-holding-gun-city"     # generic tags (solo, looking at viewer) stay out of the name
+    assert describe([], [])["name"] == "untitled"
+
+
+def test_weapon_in_finds_the_weapon_word():
+    from sidecar.actions import weapon_in
+    assert weapon_in("1boy, navy riot gear, holding gun, rain") == "gun"
+    assert weapon_in("(assault rifle:1.2), aiming") == "rifle"
+    assert weapon_in("1girl, katana, slash") == "katana"
+    assert weapon_in("1boy, running, rain") is None

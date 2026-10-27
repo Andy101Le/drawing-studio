@@ -27,6 +27,7 @@ DEFAULTS = {
     "minSide": 24,         # ignore regions smaller than this (px) in the source
     "work": 512,           # crop is scaled to this before inpainting
     "feather": 0.12,       # soft edge as a share of the crop size
+    "weapon": None,        # weapon word from the prompt: hand patches widen to 0.6 and ask for a grip on it
 }
 
 PROMPTS = {
@@ -134,8 +135,12 @@ def run_detail(engine, img, opts: dict, prompt_extra: str, negative_extra: str, 
     hands = merge_overlapping([b for k, b in regions if k == "hand"])
     todo = [(k, b) for k, b in regions if k != "hand"] + [("hand", b) for b in hands]
     out = img.convert("RGB")
+    weapon = o.get("weapon")
     for i, (kind, raw) in enumerate(todo):
-        box = pad_box(raw, float(o["pad"]), w, h, square=True)
+        # a hand holding a weapon is redone together with the weapon: a hand patch that stops at the
+        # knuckles cannot fix a grip, and a gun drawn without the hand grows out of the wrist
+        pad = max(float(o["pad"]), 0.6) if (kind == "hand" and weapon) else float(o["pad"])
+        box = pad_box(raw, pad, w, h, square=True)
         x0, y0, x1, y1 = box; side = min(x1 - x0, y1 - y0)
         if side < int(o["minSide"]): report["skipped"] += 1; continue
         x1, y1 = x0 + side, y0 + side
@@ -143,6 +148,9 @@ def run_detail(engine, img, opts: dict, prompt_extra: str, negative_extra: str, 
         up = crop.resize((work, work), Image.LANCZOS)
         mask = feather_mask(work, float(o["feather"]))
         pos, neg = PROMPTS[kind]
+        if kind == "hand" and weapon:
+            pos = f"hand gripping a {weapon}, fingers wrapped around the grip, five fingers, correct grip, {weapon} held naturally, clean lineart"
+            neg = f"{neg}, {weapon} fused with hand, {weapon} growing from arm, floating {weapon}, extra {weapon}, weapon merged with body"
         p = f"{pos}, {prompt_extra}" if prompt_extra else pos
         n = f"{neg}, {negative_extra}" if negative_extra else neg
         try:

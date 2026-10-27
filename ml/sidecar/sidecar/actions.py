@@ -222,3 +222,35 @@ def remove_item(root: str, rel: str) -> str:
         if os.path.isfile(base + e): os.replace(base + e, os.path.join(dst, os.path.basename(base) + e))
     return dst
 
+
+# Tags the tagger emits for almost every picture: they say nothing about this one, so they stay
+# out of the suggested name (they still go in the caption, where they are true and harmless).
+GENERIC = {"solo", "simple background", "white background", "grey background", "looking at viewer", "upper body", "full body", "portrait", "close-up", "male focus", "female focus", "1boy", "1girl", "2boys", "2girls", "multiple boys", "multiple girls", "monochrome", "greyscale", "greyscale", "comic", "manga", "highres", "absurdres", "lowres", "signature", "artist name", "watermark", "standing", "cowboy shot", "from side", "from behind", "from above", "from below", "blurry", "depth of field", "english text", "speech bubble", "outdoors", "indoors", "sky", "day", "night"}
+SUBJECTS = ["1boy", "1girl", "2boys", "2girls", "multiple boys", "multiple girls", "no humans"]
+
+def describe(tags, triggers=()):
+    """
+    From tagger output ([{tag, p}] sorted by confidence) build what the Keep form should show:
+    a caption (subject first, then the rest in confidence order), the action folder, and a short
+    name: subject, action, and the three most confident tags that are specific to this picture.
+    `triggers` are LoRA trigger words the job used; they are not visible in the picture but a
+    character LoRA needs them in the caption, so they go first.
+    """
+    names = [t["tag"] if isinstance(t, dict) else t for t in tags]
+    subject = next((t for t in names if t in SUBJECTS), "")
+    rest = [t for t in names if t != subject]
+    caption = ", ".join([*triggers, *([subject] if subject else []), *rest])
+    action = action_for(caption)
+    specific = [t for t in rest if t not in GENERIC][:3]
+    name = slug(" ".join([subject, action if action != "misc" else "", *specific]))
+    return {"name": name or "untitled", "action": action, "caption": caption, "tags": names}
+
+WEAPON_WORDS = ["gun", "handgun", "pistol", "revolver", "rifle", "shotgun", "assault rifle", "sniper rifle", "submachine gun", "machine gun", "weapon", "sword", "katana", "blade", "dagger", "knife", "spear", "axe", "bow", "staff"]
+
+def weapon_in(text: str):
+    """The weapon word a prompt names, or None. Used to switch the hand detail pass to a 'gripping' prompt."""
+    tags = [_clean(t) for t in _split.split(text or "") if t.strip()]
+    joined = " " + " ".join(tags) + " "
+    for w in WEAPON_WORDS:
+        if f" {w} " in joined or f" {w}," in joined or any(t == w or t.endswith(" " + w) or t.startswith(w + " ") for t in tags): return w
+    return None

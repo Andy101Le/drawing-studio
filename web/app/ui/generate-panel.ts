@@ -5,7 +5,7 @@
  * new layers with their parameters recorded, so any result can be reproduced or re-seeded.
  */
 import { setRedrawSource, redrawAsMangaPanel } from "./redraw-panel.js";
-import { TAG_GROUPS, PANEL_RECIPES, MANGA_LOOK_TAGS, MANGA_LOOK_NEGATIVE, ANATOMY_NEGATIVE, ANATOMY_POSITIVE } from "./manga-tags.js";
+import { TAG_GROUPS, PANEL_RECIPES, MANGA_LOOK_TAGS, MANGA_LOOK_NEGATIVE, ANATOMY_NEGATIVE, ANATOMY_POSITIVE, weaponIn, weaponPositive, weaponNegative } from "./manga-tags.js";
 import { POSE_PRESETS, drawPose, fitPose, hitJoint, mirrorPose, moveJoint, poseToPng, type Pose } from "../engine/pose.js";
 import { DESIGN_DEFAULTS, designPrompt, renderDesign, renderStyleTags, type Design } from "./character-design.js";
 import { FINISH_DEFAULTS, type FinishOptions, type MangaFinish } from "../engine/manga-finish.js";
@@ -62,9 +62,11 @@ export function generatePanel(app: AppState): HTMLElement {
     const triggers = st.loras.map((l) => loraTriggers[l.name]).filter((t): t is string => !!t && !st.prompt.includes(t) && !st.tags.includes(t));
     const style = [...(st.mangaLook ? MANGA_LOOK_TAGS : []), ...renderStyleTags(st.design)];
     const styleSet = new Set(style);
-    const parts = [...triggers, ...d.positive, st.prompt.trim(), ...st.tags.filter((t) => !styleSet.has(t)), ...style, ...(st.anatomy ? ANATOMY_POSITIVE : [])];
+    // weapon guard: when the prompt, the tags or the design name a weapon, say how it is held and name the failures
+    const weapon = st.anatomy ? weaponIn([st.prompt, ...st.tags, ...d.positive].join(", ")) : null;
+    const parts = [...triggers, ...d.positive, st.prompt.trim(), ...st.tags.filter((t) => !styleSet.has(t)), ...(weapon ? weaponPositive(weapon) : []), ...style, ...(st.anatomy ? ANATOMY_POSITIVE : [])];
     const prompt = [...new Set(parts.filter(Boolean))].join(", ");
-    const negative = [...new Set([st.negative.trim(), ...(st.mangaLook ? [MANGA_LOOK_NEGATIVE] : []), ...d.negative, ...(st.anatomy ? [ANATOMY_NEGATIVE] : [])].filter(Boolean))].join(", ");
+    const negative = [...new Set([st.negative.trim(), ...(st.mangaLook ? [MANGA_LOOK_NEGATIVE] : []), ...d.negative, ...(st.anatomy ? [ANATOMY_NEGATIVE] : []), ...(weapon ? [weaponNegative(weapon)] : [])].filter(Boolean))].join(", ");
     return { prompt, negative };
   };
   const buildRequest = (): GenRequest => {
@@ -94,16 +96,21 @@ export function generatePanel(app: AppState): HTMLElement {
   const refreshStats = async () => { try { if (runner.provider.datasetStats) stats = await runner.provider.datasetStats(); } catch { stats = null; } render(); };
   type Job = { result: { image: string; seed: number } | null; req: GenRequest; id?: string };
   /** the Keep dialog: name, action folder and caption for one result, before it goes into the training set */
-  let keep: { job: Job; name: string; action: string; caption: string; guessed: string; busy: boolean; saved?: string } | null = null;
+  let keep: { job: Job; name: string; action: string; caption: string; guessed: string; busy: boolean; saved?: string; /** where the fields came from */ from: "prompt" | "picture" | "looking"; seen?: string[] } | null = null;
   let actionList: string[] = [];
   const captionFor = (j: Job) => j.req.prompt || [...st.tags, st.prompt].filter(Boolean).join(", ");
   const openKeep = async (j: Job) => {
     if (!j.result) return;
-    keep = { job: j, name: "", action: "misc", caption: captionFor(j), guessed: "misc", busy: false }; render();
+    keep = { job: j, name: "", action: "misc", caption: captionFor(j), guessed: "misc", busy: false, from: runner.provider.describe ? "looking" : "prompt" }; render();
     try {
       if (!actionList.length && runner.provider.datasetActions) actionList = await runner.provider.datasetActions();
-      if (runner.provider.guessAction) { const g = await runner.provider.guessAction(keep.caption); if (keep && keep.job === j) { keep.guessed = g; keep.action = g; } }
-    } catch { /* offline: the sidecar still picks the folder from the caption */ }
+      // the tagger looks at the picture and proposes a name, folder and caption from what is actually there,
+      // not from what was asked for; the user checks and corrects
+      if (runner.provider.describe) {
+        const dsc = await runner.provider.describe(j.result.image, j.req.prompt);
+        if (keep && keep.job === j) { keep.name = dsc.name; keep.action = dsc.action; keep.guessed = dsc.action; keep.caption = dsc.caption; keep.seen = dsc.tags.map((t) => t.tag); keep.from = "picture"; }
+      } else if (runner.provider.guessAction) { const g = await runner.provider.guessAction(keep.caption); if (keep && keep.job === j) { keep.guessed = g; keep.action = g; } }
+    } catch { if (keep && keep.job === j) keep.from = "prompt"; /* offline or old sidecar: the fields come from the prompt */ }
     render();
     const el = root.querySelector<HTMLInputElement>("#keep-name"); el?.focus();
   };
@@ -291,7 +298,7 @@ export function generatePanel(app: AppState): HTMLElement {
       field("Detail pass", h("div", { class: "row", style: { gap: "8px", alignItems: "center", flexWrap: "wrap" } },
         ...([["detailFaces", "faces"], ["detailEyes", "eyes"], ["detailHands", "hands"]] as const).map(([k, l]) => h("label", { class: "row", style: { gap: "3px", alignItems: "center" }, title: `Redo ${l}`, "data-help": `After the image is done, find each ${l === "eyes" ? "eye strip" : l.slice(0, -1)} with the pose detector, cut it out, redraw it at 512 px with a prompt that names it (five fingers, symmetrical eyes) and blend it back with a soft edge. The usual fix for merged fingers and mismatched eyes. Adds a few seconds per region; skipped in Fast preview.` }, h("input", { type: "checkbox", checked: st[k], onChange: (e: Event) => { st[k] = (e.target as HTMLInputElement).checked; save(); } }), l)))),
       st.detailFaces || st.detailEyes || st.detailHands ? field("Detail strength", slider(0.25, 0.65, 0.01, st.detailStrength, (v) => { st.detailStrength = v; save(); }), () => st.detailStrength.toFixed(2)) : null,
-      field("Anatomy guard", h("input", { type: "checkbox", checked: st.anatomy, title: "Anatomy guard", "data-help": `Adds "${ANATOMY_POSITIVE.join(", ")}" to the prompt and the usual failures (extra fingers, fused fingers, extra limbs, asymmetrical eyes...) to the negative.`, onChange: (e: Event) => { st.anatomy = (e.target as HTMLInputElement).checked; save(); render(); } })),
+      field("Anatomy guard", h("input", { type: "checkbox", checked: st.anatomy, title: "Anatomy guard", "data-help": `Adds "${ANATOMY_POSITIVE.join(", ")}" to the prompt and the usual failures (extra fingers, fused fingers, extra limbs, asymmetrical eyes, objects growing from the body...) to the negative. When the prompt or tags name a weapon it also says how the weapon is held and names the weapon failures (fused with the arm, floating, duplicated), and the hand detail pass redoes each hand together with the weapon.`, onChange: (e: Event) => { st.anatomy = (e.target as HTMLInputElement).checked; save(); render(); } })),
       field("Neg. embeddings", h("div", { class: "row", style: { gap: "6px", alignItems: "center", flexWrap: "wrap" } },
         h("input", { type: "checkbox", checked: st.negEmbeddings, title: "Use negative embeddings", "data-help": "Textual-inversion files in ml/sidecar/embeddings (bad-hands-5, EasyNegative and the like, downloaded by you) are appended to the negative prompt by their file name. Trained specifically on broken hands; a few hundred KB each.", onChange: (e: Event) => { st.negEmbeddings = (e.target as HTMLInputElement).checked; save(); } }),
         h("span", { class: "dim", style: { fontSize: "11px" } }, health?.embeddings?.length ? `loaded: ${health.embeddings.join(", ")}` : "none loaded: drop .safetensors/.pt files into ml/sidecar/embeddings and restart the sidecar"))),
@@ -396,16 +403,20 @@ export function generatePanel(app: AppState): HTMLElement {
           return h("div", { class: "keep-box", style: { border: "1px solid #555", borderRadius: "4px", padding: "6px", marginTop: "6px", fontSize: "11.5px" } },
             done ? h("div", {}, h("span", { class: "chip ok" }, "kept"), h("span", { class: "mono dim", style: { marginLeft: "6px" } }, k.saved!), h("button", { style: { marginLeft: "8px" }, title: "Close", onClick: () => { keep = null; render(); } }, "Close"))
             : h("div", {},
+              h("div", { class: "dim", style: { marginBottom: "4px" } }, k.from === "looking" ? "Looking at the picture…" : k.from === "picture" ? "Name, folder and caption come from what the tagger sees in the picture, not from the prompt. Check them and fix what is wrong before saving." : "Filled from the prompt (the sidecar's tagger is not available). Check them against the picture."),
               h("div", { class: "row", style: { gap: "6px", alignItems: "center", marginBottom: "4px" } },
                 h("label", { style: { width: "52px" } }, "Name"),
                 h("input", { id: "keep-name", type: "text", value: k.name, placeholder: "e.g. trooper sword swing rooftop", style: { flex: "1" }, title: "Image name", "data-help": "Becomes the file name (lower case, hyphens). Leave empty for a timestamp.", onInput: (e: Event) => { k.name = (e.target as HTMLInputElement).value; }, onKeydown: (e: KeyboardEvent) => { if (e.key === "Enter") { k.busy = true; render(); void rate("liked", j, { name: k.name, action: k.action, caption: k.caption }); } if (e.key === "Escape") { keep = null; render(); } } })),
               h("div", { class: "row", style: { gap: "6px", alignItems: "center", marginBottom: "4px" } },
                 h("label", { style: { width: "52px" } }, "Action"),
                 h("select", { title: "Action folder", "data-help": "The folder under dataset/liked. The trainer draws every folder equally, so this is how a rare action gets its share.", onChange: (e: Event) => { k.action = (e.target as HTMLSelectElement).value; } },
-                  ...(actionList.length ? actionList : ["running", "walking", "jumping", "fighting", "sword", "shooting", "sneaking", "talking", "death", "disarming", "sitting", "standing", "misc"]).map((a) => h("option", { value: a, selected: a === k.action }, a + (a === k.guessed ? " (from caption)" : "")))),
+                  ...(actionList.length ? actionList : ["running", "walking", "jumping", "fighting", "sword", "shooting", "sneaking", "talking", "death", "disarming", "sitting", "standing", "misc"]).map((a) => h("option", { value: a, selected: a === k.action }, a + (a === k.guessed ? (k.from === "picture" ? " (seen)" : " (from caption)") : "")))),
                 stats?.actions ? h("span", { class: "dim" }, `${stats.actions[k.action] ?? 0} so far`) : null),
               h("div", { class: "field stack" }, h("label", { title: "Caption", "data-help": "What the model will learn from this image. Keep the tags that are true of the picture; remove the ones that did not come out; add what you see that the prompt did not say." }, "Caption (what it learns)"),
-                h("textarea", { rows: 3, style: { width: "100%", resize: "vertical", fontSize: "11px" }, onInput: (e: Event) => { k.caption = (e.target as HTMLTextAreaElement).value; } }, k.caption)),
+                h("textarea", { rows: 3, style: { width: "100%", resize: "vertical", fontSize: "11px" }, onInput: (e: Event) => { k.caption = (e.target as HTMLTextAreaElement).value; } }, k.caption),
+                k.from === "picture" ? h("div", { class: "row", style: { gap: "6px", marginTop: "3px" } },
+                  h("button", { title: "Use the prompt instead", "data-help": "Replace the caption with the prompt that made the picture (tags, look and all).", onClick: () => { k.caption = captionFor(j); render(); } }, "Use prompt instead"),
+                  h("button", { title: "Merge prompt", "data-help": "Append the prompt's tags that the tagger did not see. Useful when the prompt names things the tagger has no word for (a character, a costume name).", onClick: () => { const have = new Set(k.caption.split(/\s*,\s*/).map((t) => t.toLowerCase())); const add = captionFor(j).split(/\s*,\s*/).map((t) => t.trim()).filter((t) => t && !have.has(t.toLowerCase().replace(/^\(+|\)+$|:[\d.]+$/g, ""))); k.caption = [k.caption, ...add].filter(Boolean).join(", "); render(); } }, "Merge prompt")) : null),
               h("div", { class: "row", style: { gap: "6px", marginTop: "4px" } },
                 h("button", { class: "primary", disabled: k.busy, title: "Save to training set", onClick: () => { k.busy = true; render(); void rate("liked", j, { name: k.name, action: k.action, caption: k.caption }); } }, k.busy ? "Saving…" : "Save to training set"),
                 h("button", { title: "Cancel keep", onClick: () => { keep = null; render(); } }, "Cancel"))));

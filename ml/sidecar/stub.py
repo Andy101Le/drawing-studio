@@ -1,5 +1,5 @@
 """Contract stub: the same HTTP surface as the real sidecar with a placeholder image, no model. Used by tests and by anyone wiring the app without a GPU."""
-import io, json, base64, struct, zlib, threading, time, uuid, sys
+import io, json, base64, struct, zlib, threading, time, uuid, sys, os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 def png(w, h, seed):
@@ -55,6 +55,12 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/dataset/update": return self._send(200, {"id": body.get("id"), "caption": body.get("caption", ""), "issues": []})
         if self.path == "/dataset/remove": return self._send(200, {"movedTo": "C:\\omni-cell\\ml\\sidecar\\dataset\\removed"})
         if self.path == "/dataset/suggest": return self._send(200, {"tags": [{"tag": "1boy", "p": 0.95}, {"tag": "armor", "p": 0.9}, {"tag": "helmet", "p": 0.8}, {"tag": "rain", "p": 0.6}, {"tag": "holding gun", "p": 0.55}]})
+        if self.path == "/describe":
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from sidecar.actions import describe
+            tags = [{"tag": "1boy", "p": 0.95}, {"tag": "solo", "p": 0.93}, {"tag": "helmet", "p": 0.88}, {"tag": "armor", "p": 0.86}, {"tag": "holding gun", "p": 0.7}, {"tag": "city", "p": 0.52}, {"tag": "looking at viewer", "p": 0.5}]
+            prompt = (body.get("prompt") or "").lower()
+            return self._send(200, {**describe(tags, ["kai"] if "kai" in prompt else []), "tags": tags})
         if self.path == "/dataset/guess":
             cap = (body.get("caption") or "").lower(); return self._send(200, {"action": "running" if "running" in cap else "sword" if "sword" in cap or "katana" in cap else "misc"})
         if self.path == "/dataset/organize": return self._send(200, stats())
