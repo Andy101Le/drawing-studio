@@ -28,6 +28,8 @@ p.add_argument("--resolution", type=int, default=512)
 p.add_argument("--batch", type=int, default=1)
 p.add_argument("--accum", type=int, default=4, help="gradient accumulation: effective batch = batch * accum")
 p.add_argument("--trigger", default="ohwx-style", help="word prepended to every caption; the app adds it to prompts automatically when the LoRA is on (empty to disable)")
+p.add_argument("--balance", type=int, default=1, help="1: sample every action folder equally (default); 0: natural frequencies")
+p.add_argument("--snr-gamma", type=float, default=5.0, help="min-SNR loss weighting (5 is the paper's value; 0 = off): steadier training, cleaner detail")
 p.add_argument("--save-every", type=int, default=250, help="also write loras/<name>-s<step>.safetensors at these steps, so you can compare an earlier, lighter version against the final one")
 a = p.parse_args()
 
@@ -93,29 +95,38 @@ class Pairs(Dataset):
             good = [w for w in words if w.isalpha() and len(w) > 1]
             return ", ".join([" ".join(good)]) if len(good) >= 2 and len(good) >= len(words) / 2 else ""
         uncaptioned = []
-        for f in sorted(os.listdir(folder)):
-            stem, ext = os.path.splitext(f)
-            if ext.lower() not in exts: continue
-            cap = ""
-            j = os.path.join(folder, stem + ".json"); t = os.path.join(folder, stem + ".txt")
-            if os.path.isfile(j):  # written by Keep in the Generate tab
-                with open(j, encoding="utf-8") as fh: meta = json.load(fh)
-                cap = (meta.get("caption") or meta.get("prompt") or "").strip()
-            if not cap and os.path.isfile(t):  # .txt: older Keep files, or a caption you wrote yourself
-                with open(t, encoding="utf-8") as fh: cap = fh.read().strip()
+        # images sit either flat in the folder or one level down in action folders (dataset/liked/running/...)
+        sys.path.insert(0, ".")
+        from sidecar.actions import walk_images, caption_of, action_for
+        self.actions = []
+        for path, action in walk_images(folder):
+            f = os.path.relpath(path, folder); stem = os.path.splitext(os.path.basename(path))[0]
+            cap = caption_of(path)
             if not cap: cap = name_caption(stem)
             if not cap: uncaptioned.append(f)
             try:
-                with Image.open(os.path.join(folder, f)) as probe: probe.verify()
+                with Image.open(path) as probe: probe.verify()
             except Exception:
                 print(f"   skipped {f}: this Python cannot read it (convert it to .png or .jpg)"); continue
-            self.items.append((os.path.join(folder, f), (trigger + ", " + cap).strip(", ") if trigger else cap))
+            self.items.append((path, (trigger + ", " + cap).strip(", ") if trigger else cap))
+            self.actions.append(action or action_for(cap))
         if uncaptioned:
             print(f"{len(uncaptioned)} images have no caption (.json from Keep or a .txt next to them); they train on the trigger word only:")
             for f in uncaptioned: print("   ", f)
         self.res = res
         if not self.items: raise SystemExit(f"no images in {folder}: keep some results in the Generate tab first")
-        print(f"{len(self.items)} images")
+        per = {}
+        for a in self.actions: per[a] = per.get(a, 0) + 1
+        print(f"{len(self.items)} images: " + ", ".join(f"{k} {v}" for k, v in sorted(per.items(), key=lambda kv: -kv[1])))
+        thin = [k for k, v in per.items() if v < 8]
+        if thin: print(f"   thin actions (under 8 images, the model will barely learn them): {', '.join(thin)}")
+
+    def weights(self, cap=3.0):
+        """Sampling weight per image so every action gets an equal share of training, with no image drawn more than `cap` times its natural share."""
+        per = {}
+        for a in self.actions: per[a] = per.get(a, 0) + 1
+        n = len(self.actions); k = len(per)
+        return [min(cap, (n / k) / per[a]) for a in self.actions]
 
     def __len__(self): return len(self.items)
 
@@ -128,12 +139,18 @@ class Pairs(Dataset):
         if random.random() < 0.5: im = im.transpose(Image.FLIP_LEFT_RIGHT)
         import numpy as np
         x = torch.from_numpy(np.asarray(im, dtype=np.uint8).copy()).permute(2, 0, 1).float() / 127.5 - 1.0
+        # 10% of the time the caption is dropped, so the LoRA also works when a prompt says little
+        if random.random() < 0.1: cap = ""
         ids = tokenizer(cap or "illustration", padding="max_length", truncation=True,
                         max_length=tokenizer.model_max_length, return_tensors="pt").input_ids[0]
         return x, ids
 
 
-loader = DataLoader(Pairs(a.data, a.resolution, a.trigger), batch_size=a.batch, shuffle=True, num_workers=0, drop_last=True)
+pairs = Pairs(a.data, a.resolution, a.trigger)
+# balanced across action folders: a thin action is drawn as often as a fat one (capped at 3x)
+from torch.utils.data import WeightedRandomSampler
+sampler = WeightedRandomSampler(pairs.weights(), num_samples=len(pairs), replacement=True) if a.balance else None
+loader = DataLoader(pairs, batch_size=a.batch, shuffle=sampler is None, sampler=sampler, num_workers=0, drop_last=True)
 if a.steps <= 0:
     # 12 passes over the set is where style LoRAs on 40-100 images usually look right at weight 0.6-0.8;
     # more than ~25 passes starts copying whole images [A: rule of thumb, not measured on this set]
@@ -144,7 +161,7 @@ def write_lora(path):
     state = {f"unet.{k}": v for k, v in get_peft_model_state_dict(unet).items()}
     save_file(state, path)
     with open(path[:-12] + ".json", "w", encoding="utf-8") as f:
-        json.dump({"trigger": a.trigger, "steps": step, "rank": a.rank, "lr": a.lr, "resolution": a.resolution, "images": len(loader.dataset), "base": a.model}, f, indent=1)
+        json.dump({"trigger": a.trigger, "steps": step, "rank": a.rank, "lr": a.lr, "resolution": a.resolution, "images": len(loader.dataset), "base": a.model, "balanced": bool(a.balance), "snrGamma": a.snr_gamma}, f, indent=1)
 opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=1e-2)
 sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, a.steps))
 scaler = torch.amp.GradScaler("cuda", enabled=(device == "cuda"))
@@ -163,7 +180,13 @@ while step < a.steps:
         target = noise if noise_sched.config.prediction_type == "epsilon" else noise_sched.get_velocity(lat, noise, t)
         with torch.amp.autocast("cuda", enabled=(device == "cuda")):
             pred = unet(noisy, t, encoder_hidden_states=emb).sample
-            loss = torch.nn.functional.mse_loss(pred.float(), target.float()) / a.accum
+            per_px = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none").mean(dim=(1, 2, 3))
+            if a.snr_gamma > 0:
+                # min-SNR-gamma (Hang et al. 2023): down-weight the easy low-noise steps that otherwise dominate
+                ac = noise_sched.alphas_cumprod.to(device)[t]; snr = ac / (1 - ac)
+                w = torch.clamp(snr, max=a.snr_gamma) / (snr if noise_sched.config.prediction_type == "epsilon" else snr + 1)
+                per_px = per_px * w
+            loss = per_px.mean() / a.accum
         scaler.scale(loss).backward()
         if (step + 1) % a.accum == 0:
             scaler.unscale_(opt); torch.nn.utils.clip_grad_norm_(params, 1.0)
@@ -176,4 +199,5 @@ while step < a.steps:
 
 out = os.path.join("loras", a.name + ".safetensors")
 write_lora(out)
-print(f"\nwrote {out}\nPick it in the Generate tab under LoRA styles." + (f"\nUse the trigger word '{a.trigger}' in prompts." if a.trigger else ""))
+print(f"\nwrote {out}\nPick it in the Generate tab under LoRA styles." + (f"\nUse the trigger word '{a.trigger}' in prompts." if a.trigger else "") +
+      f"\nTo compare checkpoints per action:  .\\.venv\\Scripts\\python eval_lora.py --name {a.name}")

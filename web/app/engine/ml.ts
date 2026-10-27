@@ -46,7 +46,7 @@ export interface GenRequest {
 export type GenModeAll = GenMode | "inpaint";
 export interface GenProgress { step: number; total: number; preview?: string }
 export interface GenResult { image: string; seed: number; model: string; ms: number; profile?: string; vramPeakGB?: number | null; fast?: boolean; promptTokens?: number; negativeTokens?: number; chunks?: number }
-export interface DatasetStats { path: string; liked: number; rejected: number; readyToTrain: boolean }
+export interface DatasetStats { path: string; liked: number; rejected: number; readyToTrain: boolean; /** kept images per action folder */ actions?: Record<string, number>; /** actions with fewer than 8 images */ thin?: string[]; /** flat images not yet sorted into action folders */ unsorted?: number; /** images with no caption (train on the trigger word only) */ uncaptioned?: number; /** from organize: byte-identical copies moved aside */ duplicates?: number; moved?: number }
 export interface ProviderHealth { ok: boolean; model?: string; family?: string; device?: string; vramGB?: number; freeVramGB?: number; controlnets?: string[]; profile?: string; maxPx?: number; presets?: string[]; ipAdapter?: boolean; upscaler?: boolean; message?: string }
 export interface Provider {
   readonly id: string; readonly name: string; readonly leavesDevice: boolean;
@@ -64,8 +64,14 @@ export interface Provider {
   tokens?(prompt: string, negative: string, qualityTags: boolean): Promise<{ prompt: number; negative: number; chunk: number }>;
   tag?(image: string): Promise<Array<{ tag: string; p: number }>>;
   upscale?(image: string, scale: number): Promise<{ image: string; width: number; height: number }>;
-  rate?(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown): Promise<DatasetStats>;
+  rate?(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown, extra?: { name?: string; action?: string }): Promise<DatasetStats & { saved?: string }>;
+  /** action folders the Keep dialog can offer */
+  datasetActions?(): Promise<string[]>;
+  /** the folder the sidecar would pick for a caption */
+  guessAction?(caption: string): Promise<string>;
   datasetStats?(): Promise<DatasetStats>;
+  /** sort flat kept images into action folders by caption */
+  organizeDataset?(): Promise<DatasetStats>;
   /** a few random kept images (small data URLs), different each call */
   sampleKept?(n: number): Promise<{ images: string[]; pool: number }>;
 }
@@ -86,8 +92,11 @@ export class SidecarProvider implements Provider {
   tokens(prompt: string, negative: string, qualityTags: boolean) { return this.json<{ prompt: number; negative: number; chunk: number }>("/tokens", { method: "POST", body: JSON.stringify({ prompt, negative, qualityTags }) }); }
   tag(image: string) { return this.json<{ tags: Array<{ tag: string; p: number }> }>("/tag", { method: "POST", body: JSON.stringify({ image }) }).then((r) => r.tags); }
   upscale(image: string, scale: number) { return this.json<{ image: string; width: number; height: number }>("/upscale", { method: "POST", body: JSON.stringify({ image, scale }) }); }
-  rate(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown) { return this.json<DatasetStats>("/dataset/add", { method: "POST", body: JSON.stringify({ image, verdict, caption, meta }) }); }
+  rate(image: string, verdict: "liked" | "rejected", caption: string, meta: unknown, extra?: { name?: string; action?: string }) { return this.json<DatasetStats & { saved?: string }>("/dataset/add", { method: "POST", body: JSON.stringify({ image, verdict, caption, meta, ...(extra ?? {}) }) }); }
+  datasetActions() { return this.json<{ actions: string[] }>("/dataset/actions").then((r) => r.actions); }
+  guessAction(caption: string) { return this.json<{ action: string }>("/dataset/guess", { method: "POST", body: JSON.stringify({ caption }) }).then((r) => r.action); }
   datasetStats() { return this.json<DatasetStats>("/dataset/stats"); }
+  organizeDataset() { return this.json<DatasetStats>("/dataset/organize", { method: "POST", body: "{}" }); }
   sampleKept(n: number) { return this.json<{ images: string[]; pool: number }>(`/dataset/sample?n=${n}`); }
 }
 

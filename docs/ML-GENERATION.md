@@ -159,3 +159,33 @@ The sidecar passed the prompt as a plain string, and CLIP reads 77 tokens: quali
 - **Why "my-style" images looked poor**: the screenshots show Fast preview on (LCM: 8 steps at guidance 2, LoRA and sliders mostly ignored) with Guidance 15 and 60 steps set underneath, and results arriving in 4 s. Fast results are now badged "preview" with a **Full quality** button (same seed, Fast off, at least 28 steps); the checkbox says what it costs; Guidance above 9 shows a warning with a "Use 7" button (and a CFG-rescale hint); LoRA weight above 1.0 warns; the LoRA default weight is 0.7.
 - Training: `train_lora.py` now defaults the step count to about 12 passes over the set (300-1500), writes checkpoints `<name>-s250`, `-s500`... so an earlier, lighter version can be compared, and writes `<name>.json` with the trigger word (default `ohwx-style`). `/loras` returns the triggers and the app adds the word to prompts automatically when the LoRA is ticked. [A: whether the current my-style is over- or under-trained cannot be judged from here; compare the checkpoints at weight 0.6-0.8 with Fast preview off.]
 
+## Action folders and a better trainer (loop 20)
+
+Question asked: does sorting the kept images into folders per action (running, walking, shooting, sword, jumping, sneaking...) make the model better?
+
+Short answer: not on its own. A LoRA learns from the captions next to the images, and the caption already says "running". Folder names never reach the model. What the folders do give you is bookkeeping and balance, and balance does change the result:
+
+- You can see the shape of the set. 40 standing portraits and 3 sneaking images means the model has seen sneaking three times; no amount of training fixes that. The Generate tab now shows the count per action and lists the actions under 8 images, so you know what to keep next.
+- The trainer samples every action folder equally (`--balance 1`, default), capped at three times an image's natural share, so a thin action is drawn as often as a fat one instead of being drowned.
+- `eval_lora.py` renders one fixed prompt per action for each checkpoint and lays them out as a sheet, so you pick the checkpoint by looking at the actions you care about rather than at one lucky seed.
+
+What changed:
+
+- `sidecar/actions.py`: the action list and the caption-to-folder rule (first action group whose tag appears wins; emphasis syntax is stripped; no action tag means `misc`). Keep writes into `dataset/liked/<action>/`. `POST /dataset/organize` sorts older flat images; the app offers it as a button when it sees unsorted files. `/dataset/stats` returns `actions`, `thin` and `unsorted`.
+- `train_lora.py`: walks the action folders, prints the count per action and the thin ones, balanced sampling, 10% caption dropout (the LoRA then also helps when a prompt says little), min-SNR-gamma 5 loss weighting (steadier training; the paper's value), and the same checkpoints and `.json` as before.
+- `eval_lora.py --name my-style [--weights 0.5,0.7,0.9]` writes `loras/my-style-eval.png`: rows are actions, columns are "no LoRA" then each checkpoint at each weight.
+- Tags: `sword swing`, `slash`, `weapon drop` added so the vocabulary matches the folder rule.
+
+What would move quality more than any of this, in order, and why it is not in this loop:
+
+1. More and better images per action. 8 is a floor, 20 per action is where the look settles. This is on you, not the code.
+2. Pose control from the 3D mannequin (OpenPose ControlNet). Actions are poses; a pose image pins the body, and the LoRA only has to supply the look. Needs the openpose ControlNet (about 1.4 GB) and a skeleton renderer for the mannequin. Filed as an issue.
+3. Preference tuning on the kept/discarded pairs (Diffusion-DPO). Uses the Discard pile, which nothing uses today. Needs pairs from the same prompt and seed and a second training script. Filed as an issue.
+4. Training at 768 instead of 512 on a card with 8 GB or more. On the 6 GB card it does not fit with the current settings.
+
+None of the training changes have been run on a GPU here; the classifier and the organise step have unit tests (`python -m pytest ml/sidecar/tests`), and the app side is covered by the Playwright script `actions.py` against the stub.
+
+### Naming what goes into the set (loop 20b)
+
+Keep now opens a form on the result: name, action folder and caption. The sidecar takes `name` and `action` on `POST /dataset/add` (`/dataset/actions` lists the folders, `/dataset/guess` returns the folder the caption implies), slugs the name to a file-safe stem and appends six digits of the timestamp so two "sword swing" images never collide. The caption box is prefilled with the prompt that made the image; editing it is the point, since the image only teaches what its caption says. Shift-click keeps at once with the prompt as caption, as before. Playwright `keep.py` covers the dialog; `test_slug_is_file_safe` covers the stem.
+
